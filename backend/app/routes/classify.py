@@ -6,6 +6,7 @@ from app.services.classifier import (
     WORD_CLIP_FRAMES,
     classify_landmarks,
     classify_word_clip,
+    get_word_labels,
     reset_smoothing,
 )
 
@@ -85,3 +86,13 @@ def classify_reset() -> dict:
     buffer doesn't blend the previous sign into the next one."""
     reset_smoothing()
     return {"ok": True}
+
+
+@router.get("/words")
+def list_words() -> dict:
+    """Return the labels the current word model was trained on.
+
+    The frontend uses this to render the "words you can sign" chip list and
+    to generate challenge sentences — so the UI stays in sync with whatever
+    vocabulary was last trained, without hardcoding it."""
+    return {"words": get_word_labels()}

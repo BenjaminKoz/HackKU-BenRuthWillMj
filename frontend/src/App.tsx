@@ -1,14 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Webcam } from "./components/Webcam";
 import type { Landmark } from "./hooks/useHandLandmarker";
 import {
   classify,
   classifyWordClip,
   compose,
+  fetchSupportedWords,
   resetClassify,
   speak,
   type ClassifyMode,
 } from "./lib/api";
+import { pickRandomChallenge, type Challenge } from "./lib/challenges";
 
 const LETTER_CLASSIFY_INTERVAL_MS = 200;
 const LETTER_POLL_INTERVAL_MS = 100;
@@ -46,6 +48,15 @@ export default function App() {
     h2: 0,
   });
 
+  // Words the backend model currently supports (fetched from /api/words).
+  const [supportedWords, setSupportedWords] = useState<string[]>([]);
+  // Active challenge + how many words of it the user has signed in order.
+  const [challenge, setChallenge] = useState<Challenge | null>(null);
+  const [challengeProgress, setChallengeProgress] = useState(0);
+  const [challengeFeedback, setChallengeFeedback] = useState<string>("");
+  const challengeRef = useRef<Challenge | null>(null);
+  const challengeProgressRef = useRef(0);
+
   const modeRef = useRef<ClassifyMode>("letters");
   const lastLandmarksRef = useRef<Landmark[] | null>(null);
   const lastClassifyRef = useRef(0);
@@ -68,6 +79,50 @@ export default function App() {
   useEffect(() => {
     wordStateRef.current = wordState;
   }, [wordState]);
+
+  useEffect(() => {
+    challengeRef.current = challenge;
+    challengeProgressRef.current = challengeProgress;
+  }, [challenge, challengeProgress]);
+
+  // Fetch the vocabulary the backend currently knows. Powers the "words I
+  // know" chip list and the challenge-sentence filter.
+  useEffect(() => {
+    let cancelled = false;
+    fetchSupportedWords()
+      .then((words) => {
+        if (!cancelled) setSupportedWords(words);
+      })
+      .catch(() => {
+        /* backend may not be up yet; the chip list stays empty until it is */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const supportedSet = useMemo(() => new Set(supportedWords), [supportedWords]);
+
+  const startNewChallenge = useCallback(() => {
+    const next = pickRandomChallenge(supportedSet, challengeRef.current ?? undefined);
+    if (!next) {
+      setChallengeFeedback(
+        supportedSet.size === 0
+          ? "No trained words yet — train the word model first."
+          : "No challenges fit the current vocab.",
+      );
+      return;
+    }
+    setChallenge(next);
+    setChallengeProgress(0);
+    setChallengeFeedback("Sign each word in order. Spacebar to record.");
+  }, [supportedSet]);
+
+  const cancelChallenge = useCallback(() => {
+    setChallenge(null);
+    setChallengeProgress(0);
+    setChallengeFeedback("");
+  }, []);
 
   const handleLandmarks = useCallback((lms: Landmark[] | null) => {
     // Used by letters-mode continuous classification — just the primary hand.
@@ -134,6 +189,9 @@ export default function App() {
       setRecordProgress(0);
       setLastWord(null);
       setLastWordConf(0);
+      setChallenge(null);
+      setChallengeProgress(0);
+      setChallengeFeedback("");
       resetClassify().catch(() => {});
     },
     [clearWordTimers],
@@ -162,8 +220,34 @@ export default function App() {
       wordStateRef.current = "result";
       setWordState("result");
       if (conf >= WORD_MIN_CONFIDENCE) {
-        setBuffer((b) => (b ? `${b} ${letter}` : letter));
-        setStatus(`Recognized "${letter}" (${(conf * 100).toFixed(0)}%)`);
+        const activeChallenge = challengeRef.current;
+        if (activeChallenge) {
+          // Challenge mode owns the signal — words don't go to the freeform
+          // buffer, they advance (or reject) the target sentence.
+          const expected = activeChallenge.words[challengeProgressRef.current];
+          if (letter === expected) {
+            const nextProgress = challengeProgressRef.current + 1;
+            challengeProgressRef.current = nextProgress;
+            setChallengeProgress(nextProgress);
+            if (nextProgress >= activeChallenge.words.length) {
+              setChallengeFeedback(`✓ Complete: "${activeChallenge.english}"`);
+              setStatus(`Challenge complete!`);
+            } else {
+              setChallengeFeedback(
+                `Got "${letter}" — next sign: ${activeChallenge.words[nextProgress]}`,
+              );
+              setStatus(`Recognized "${letter}" (${(conf * 100).toFixed(0)}%)`);
+            }
+          } else {
+            setChallengeFeedback(
+              `Expected "${expected}", got "${letter}". Try again.`,
+            );
+            setStatus(`Recognized "${letter}" (${(conf * 100).toFixed(0)}%)`);
+          }
+        } else {
+          setBuffer((b) => (b ? `${b} ${letter}` : letter));
+          setStatus(`Recognized "${letter}" (${(conf * 100).toFixed(0)}%)`);
+        }
       } else {
         setStatus(`Low confidence: "${letter}" (${(conf * 100).toFixed(0)}%) — not added`);
       }
@@ -452,6 +536,138 @@ export default function App() {
               {speaking ? "Speaking…" : "🔊 Speak (ElevenLabs)"}
             </button>
           </div>
+
+          {mode === "words" && (
+            <>
+              <h2 style={{ marginTop: 24 }}>Words I know</h2>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {supportedWords.length === 0 ? (
+                  <span style={{ color: "#8892a6", fontSize: 13 }}>
+                    Backend not reachable — start it to see the vocabulary.
+                  </span>
+                ) : (
+                  supportedWords.map((w) => {
+                    const isNext =
+                      challenge && challenge.words[challengeProgress] === w;
+                    const isDone =
+                      challenge &&
+                      challenge.words.slice(0, challengeProgress).includes(w);
+                    return (
+                      <span
+                        key={w}
+                        style={{
+                          padding: "4px 10px",
+                          borderRadius: 999,
+                          fontSize: 12,
+                          fontWeight: 600,
+                          letterSpacing: 0.5,
+                          background: isNext
+                            ? "var(--accent)"
+                            : isDone
+                            ? "rgba(34, 211, 238, 0.15)"
+                            : "#0a0f1e",
+                          color: isNext
+                            ? "white"
+                            : isDone
+                            ? "var(--accent-2)"
+                            : "var(--text)",
+                          border: isNext
+                            ? "1px solid var(--accent)"
+                            : "1px solid #2a3457",
+                        }}
+                      >
+                        {w}
+                      </span>
+                    );
+                  })
+                )}
+              </div>
+
+              <h2 style={{ marginTop: 24 }}>Challenge</h2>
+              {challenge ? (
+                <>
+                  <div
+                    style={{
+                      fontSize: 18,
+                      fontFamily: "ui-monospace, monospace",
+                      background: "#0a0f1e",
+                      padding: 12,
+                      borderRadius: 8,
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: 6,
+                      alignItems: "center",
+                    }}
+                  >
+                    {challenge.words.map((w, i) => {
+                      const done = i < challengeProgress;
+                      const current = i === challengeProgress;
+                      return (
+                        <span
+                          key={i}
+                          style={{
+                            padding: "2px 8px",
+                            borderRadius: 6,
+                            background: current
+                              ? "var(--accent)"
+                              : done
+                              ? "rgba(34, 211, 238, 0.2)"
+                              : "transparent",
+                            color: current
+                              ? "white"
+                              : done
+                              ? "var(--accent-2)"
+                              : "var(--muted)",
+                            textDecoration: done ? "line-through" : undefined,
+                          }}
+                        >
+                          {w}
+                        </span>
+                      );
+                    })}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      color: "var(--muted)",
+                      marginTop: 8,
+                      fontStyle: "italic",
+                    }}
+                  >
+                    Target: "{challenge.english}"
+                  </div>
+                  {challengeFeedback && (
+                    <div style={{ fontSize: 13, marginTop: 6 }}>
+                      {challengeFeedback}
+                    </div>
+                  )}
+                  <div className="row">
+                    <button className="secondary" onClick={startNewChallenge}>
+                      New challenge
+                    </button>
+                    <button className="secondary" onClick={cancelChallenge}>
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize: 13, color: "var(--muted)" }}>
+                    {challengeFeedback ||
+                      "Try signing a short sentence from the trained vocab."}
+                  </div>
+                  <div className="row">
+                    <button
+                      onClick={startNewChallenge}
+                      disabled={supportedWords.length === 0}
+                    >
+                      🎯 Start challenge
+                    </button>
+                  </div>
+                </>
+              )}
+            </>
+          )}
         </div>
       </div>
     </div>

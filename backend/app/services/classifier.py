@@ -292,3 +292,11 @@ def reset_smoothing() -> None:
     _probs_buffer.clear()
     _landmark_buffer.clear()
     _last_motion_result = None
+
+
+def get_word_labels() -> List[str]:
+    """Return the sorted word-model labels, or [] if the model isn't loaded."""
+    bundle = _load_words()
+    if bundle is None:
+        return []
+    return list(bundle.get("labels", []))

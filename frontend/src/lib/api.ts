@@ -19,6 +19,13 @@ export async function resetClassify(): Promise<void> {
   await fetch("/api/classify/reset", { method: "POST" });
 }
 
+export async function fetchSupportedWords(): Promise<string[]> {
+  const res = await fetch("/api/words");
+  if (!res.ok) throw new Error(`fetchSupportedWords failed: ${res.status}`);
+  const data = await res.json();
+  return (data.words ?? []) as string[];
+}
+
 export async function classifyWordClip(
   frames: Landmark[][][],
 ): Promise<{ letter: string; confidence: number }> {
