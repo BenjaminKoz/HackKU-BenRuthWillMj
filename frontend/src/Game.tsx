@@ -23,12 +23,43 @@ export function Game() {
   const [confidence, setConfidence] = useState(0);
   const [status, setStatus] = useState("Waiting for hand…");
   const [suggestion, setSuggestion] = useState<string | null>(null);
+  const [confirmLetter, setConfirmLetter] = useState<string | null>(null);
+  const [gameHint, setGameHint] = useState<{ letter: string; description: string } | null>(null);
   
   const lastLandmarksRef = useRef<Landmark[] | null>(null);
   const lastClassifyRef = useRef(0);
   const stableLetterRef = useRef<{ letter: string; count: number }>({ letter: "", count: 0 });
   const stableSuggestionRef = useRef<{ letter: string; count: number }>({ letter: "", count: 0 });
   const inflightRef = useRef(false);
+
+  const DESCRIPTIONS: Record<string, string> = {
+    A: "Make a fist and place your thumb against the side of your index finger.",
+    B: "Hold your hand up with your fingers straight and together. Fold your thumb across your palm.",
+    C: "Curve your hand and fingers to form the shape of the letter 'C'.",
+    D: "Touch your thumb to your middle, ring, and pinky fingers. Point your index finger straight up.",
+    E: "Curl your fingers tightly into your palm and fold your thumb to rest across your fingers.",
+    F: "Touch the tips of your index finger and thumb together. Keep your other three fingers straight and spread apart.",
+    G: "Point your index finger forward and your thumb parallel to it, as if pinching something. Tuck other fingers in.",
+    H: "Point your index and middle fingers forward, keeping them together. Tuck your thumb and other fingers in.",
+    I: "Hold up your pinky finger. Fold all other fingers into a fist.",
+    J: "Hold up your pinky finger (like 'I') and trace the shape of a 'J' in the air.",
+    K: "Point your index and middle fingers upward in a 'V' shape. Place your thumb against the base of your index and middle fingers.",
+    L: "Point your index finger straight up and your thumb straight out to the side to form an 'L' shape.",
+    M: "Make a fist and tuck your thumb between your ring and pinky fingers.",
+    N: "Make a fist and tuck your thumb between your middle and ring fingers.",
+    O: "Curve all your fingers to touch the tip of your thumb, forming an 'O' shape.",
+    P: "Point your index finger forward, drop your middle finger down, and place your thumb on the middle finger (like an upside-down 'K').",
+    Q: "Point your index finger and thumb downward, as if holding something small (like an upside-down 'G').",
+    R: "Cross your index and middle fingers, keeping them pointed up. Fold the other fingers into a fist.",
+    S: "Make a fist and place your thumb over the front of your fingers.",
+    T: "Make a fist and tuck your thumb between your index and middle fingers.",
+    U: "Point your index and middle fingers straight up and keep them together. Fold other fingers into a fist.",
+    V: "Point your index and middle fingers up and spread them apart (like a peace sign). Fold other fingers into a fist.",
+    W: "Point your index, middle, and ring fingers up and spread them apart. Hold your pinky down with your thumb.",
+    X: "Make a fist, then raise and hook your index finger (like a hook).",
+    Y: "Extend your thumb and pinky fingers out to the sides. Fold the other three fingers into your palm.",
+    Z: "Extend your index finger and trace the shape of a 'Z' in the air."
+  };
 
   const initGame = useCallback(() => {
     const w = WORDS[Math.floor(Math.random() * WORDS.length)];
@@ -38,6 +69,8 @@ export function Game() {
     setGameOver(false);
     setWon(false);
     setSuggestion(null);
+    setConfirmLetter(null);
+    setGameHint(null);
     stableLetterRef.current = { letter: "", count: 0 };
     stableSuggestionRef.current = { letter: "", count: 0 };
   }, []);
@@ -47,11 +80,16 @@ export function Game() {
   }, [initGame]);
 
   const makeGuess = useCallback((letter: string) => {
-    if (gameOver || won || guessed.includes(letter)) return;
+    if (gameOver || won || guessed.includes(letter)) {
+      setConfirmLetter(null);
+      return;
+    }
     
     const newGuessed = [...guessed, letter];
     setGuessed(newGuessed);
     setSuggestion(null);
+    setConfirmLetter(null);
+    setGameHint(null);
     stableSuggestionRef.current = { letter: "", count: 0 };
     
     if (!word.includes(letter)) {
@@ -83,8 +121,8 @@ export function Game() {
         setCurrentLetter(upperLetter);
         setConfidence(conf);
         
-        if (conf >= MIN_CONFIDENCE && upperLetter !== "NOTHING") {
-          // Auto-guess logic
+        if (conf >= MIN_CONFIDENCE && upperLetter !== "NOTHING" && !guessed.includes(upperLetter)) {
+          // Stability check for confirmation
           const prev = stableLetterRef.current;
           if (prev.letter === upperLetter) {
             prev.count += 1;
@@ -93,7 +131,8 @@ export function Game() {
           }
           
           if (stableLetterRef.current.count === STABLE_FRAMES_TO_COMMIT) {
-            makeGuess(upperLetter);
+            setConfirmLetter(upperLetter);
+            setGameHint(null); // Clear manual hint if they actually sign it
             stableLetterRef.current = { letter: "", count: 0 };
           }
           
@@ -101,7 +140,7 @@ export function Game() {
           setSuggestion(null);
           stableSuggestionRef.current = { letter: "", count: 0 };
 
-        } else if (conf >= SUGGESTION_THRESHOLD && upperLetter !== "NOTHING" && !guessed.includes(upperLetter)) {
+        } else if (conf >= SUGGESTION_THRESHOLD && upperLetter !== "NOTHING" && !guessed.includes(upperLetter) && !confirmLetter) {
           // Suggestion logic with stability check
           const prevS = stableSuggestionRef.current;
           if (prevS.letter === upperLetter) {
@@ -119,9 +158,12 @@ export function Game() {
 
         } else {
           // Reset everything if confidence is too low or "NOTHING"
-          setSuggestion(null);
+          // We don't reset confirmLetter here, user must interact with UI
           stableLetterRef.current = { letter: "", count: 0 };
           stableSuggestionRef.current = { letter: "", count: 0 };
+          if (upperLetter === "NOTHING" || conf < SUGGESTION_THRESHOLD) {
+             setSuggestion(null);
+          }
         }
         setStatus("Tracking");
       } catch (e) {
@@ -131,7 +173,7 @@ export function Game() {
       }
     }, 100);
     return () => clearInterval(id);
-  }, [makeGuess, gameOver, won, guessed]);
+  }, [makeGuess, gameOver, won, guessed, confirmLetter]);
 
   const displayWord = word.split("").map(l => (guessed.includes(l) ? l : "_")).join(" ");
 
@@ -150,7 +192,77 @@ export function Game() {
           <div className="confidence">confidence {(confidence * 100).toFixed(0)}%</div>
           <div className="status">{status}</div>
 
-          {suggestion && !gameOver && !won && (
+          {gameHint && !confirmLetter && !gameOver && !won && (
+            <div style={{
+              marginTop: '20px',
+              padding: '20px',
+              backgroundColor: 'rgba(124, 92, 255, 0.1)',
+              border: '2px solid var(--accent)',
+              borderRadius: '12px',
+              textAlign: 'center',
+              boxShadow: '0 0 20px rgba(124, 92, 255, 0.2)',
+              animation: 'bounce 0.5s ease-in-out'
+            }}>
+               <p style={{ margin: '0 0 10px 0', fontSize: '18px', fontWeight: 'bold' }}>
+                How to sign <span style={{ color: 'var(--accent)', fontSize: '24px' }}>{gameHint.letter}</span>:
+              </p>
+              <p style={{ margin: '0 0 20px 0', fontSize: '15px', color: 'var(--text)', lineHeight: '1.4' }}>
+                {gameHint.description}
+              </p>
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+                <button 
+                   className="secondary"
+                   onClick={() => setGameHint(null)}
+                   style={{ padding: '8px 16px' }}
+                >
+                  I'll sign it!
+                </button>
+                <button 
+                  onClick={() => makeGuess(gameHint.letter)}
+                  style={{ padding: '8px 16px', backgroundColor: '#334155' }}
+                >
+                  Guess anyway
+                </button>
+              </div>
+            </div>
+          )}
+
+          {confirmLetter && !gameOver && !won && (
+            <div style={{
+              marginTop: '20px',
+              padding: '20px',
+              backgroundColor: 'rgba(34, 211, 238, 0.1)',
+              border: '2px solid var(--accent-2)',
+              borderRadius: '12px',
+              textAlign: 'center',
+              boxShadow: '0 0 20px rgba(34, 211, 238, 0.2)',
+              animation: 'bounce 0.5s ease-in-out'
+            }}>
+              <p style={{ margin: '0 0 15px 0', fontSize: '18px', fontWeight: 'bold' }}>
+                Confirm Guess: <span style={{ color: 'var(--accent-2)', fontSize: '28px' }}>{confirmLetter}</span>?
+              </p>
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+                <button 
+                  onClick={() => makeGuess(confirmLetter)}
+                  style={{ padding: '10px 30px', fontSize: '16px' }}
+                >
+                  Yes, Guess!
+                </button>
+                <button 
+                  className="secondary"
+                  onClick={() => {
+                    setConfirmLetter(null);
+                    stableLetterRef.current = { letter: "", count: 0 };
+                  }}
+                  style={{ padding: '10px 20px', fontSize: '16px' }}
+                >
+                  No, Try Again
+                </button>
+              </div>
+            </div>
+          )}
+
+          {suggestion && !confirmLetter && !gameHint && !gameOver && !won && (
             <div style={{
               marginTop: '20px',
               padding: '15px',
@@ -192,7 +304,13 @@ export function Game() {
                 return (
                   <button
                     key={l}
-                    onClick={() => makeGuess(l)}
+                    onClick={() => {
+                      if (!isGuessed && !gameOver && !won) {
+                        setGameHint({ letter: l, description: DESCRIPTIONS[l] });
+                        setConfirmLetter(null);
+                        setSuggestion(null);
+                      }
+                    }}
                     disabled={isGuessed || gameOver || won}
                     className="secondary"
                     style={{

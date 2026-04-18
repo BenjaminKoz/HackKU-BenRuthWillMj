@@ -49,26 +49,53 @@ export function Learning() {
   const [confidence, setConfidence] = useState(0);
   const [isCorrect, setIsCorrect] = useState(false);
   const [status, setStatus] = useState("Waiting for hand…");
+  const [showTestSuccess, setShowTestSuccess] = useState(false);
+  const [testStartTime, setTestStartTime] = useState(0);
+  const [showHint, setShowHint] = useState(false);
+  const [canSkip, setCanSkip] = useState(false);
 
   const lastLandmarksRef = useRef<Landmark[] | null>(null);
   const lastClassifyRef = useRef(0);
   const inflightRef = useRef(false);
+  const scoreUpdateRef = useRef(false);
 
   const startTest = useCallback(() => {
     setMode("test");
     const next = LETTERS[Math.floor(Math.random() * LETTERS.length)];
     setTestTarget(next);
     setScore(0);
+    setShowTestSuccess(false);
+    scoreUpdateRef.current = false;
+    setTestStartTime(Date.now());
+    setCanSkip(false);
+    setShowHint(false);
   }, []);
 
   const nextTestItem = useCallback(() => {
     const next = LETTERS[Math.floor(Math.random() * LETTERS.length)];
     setTestTarget(next);
+    setShowTestSuccess(false);
+    scoreUpdateRef.current = false;
+    setTestStartTime(Date.now());
+    setCanSkip(false);
+    setShowHint(false);
   }, []);
 
   const handleLandmarks = useCallback((lms: Landmark[] | null) => {
     lastLandmarksRef.current = lms;
   }, []);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (mode === "test" && !showTestSuccess && testStartTime > 0) {
+        const elapsed = (Date.now() - testStartTime) / 1000;
+        if (elapsed >= 15 && !canSkip) {
+          setCanSkip(true);
+        }
+      }
+    }, 1000);
+    return () => clearInterval(id);
+  }, [mode, testStartTime, showTestSuccess, canSkip]);
 
   useEffect(() => {
     const id = setInterval(async () => {
@@ -88,12 +115,26 @@ export function Learning() {
         const correct = upper === target && conf > 0.65;
         setIsCorrect(correct);
 
-        if (mode === "test" && correct) {
-          // Auto-advance in test mode after a short delay
-          setTimeout(() => {
-            setScore(s => s + 1);
-            nextTestItem();
-          }, 1000);
+        if (correct && !scoreUpdateRef.current) {
+          if (mode === "test") {
+            scoreUpdateRef.current = true;
+            setShowTestSuccess(true);
+            // Auto-advance in test mode
+            setTimeout(() => {
+              setScore(s => s + 1);
+              nextTestItem();
+            }, 1500);
+          } else {
+            scoreUpdateRef.current = true;
+            // Auto-advance in learn mode
+            setTimeout(() => {
+              const currentIndex = LETTERS.indexOf(activeLetter);
+              const nextIndex = (currentIndex + 1) % LETTERS.length;
+              setActiveLetter(LETTERS[nextIndex]);
+              setIsCorrect(false);
+              scoreUpdateRef.current = false;
+            }, 1500);
+          }
         }
         setStatus("Tracking");
       } catch (e) {
@@ -146,7 +187,10 @@ export function Learning() {
                 {LETTERS.map(l => (
                   <button 
                     key={l} 
-                    onClick={() => setActiveLetter(l)}
+                    onClick={() => {
+                      setActiveLetter(l);
+                      scoreUpdateRef.current = false;
+                    }}
                     className={l === activeLetter ? "" : "secondary"}
                     style={{ width: '40px', height: '40px', padding: 0 }}
                   >
@@ -164,13 +208,67 @@ export function Learning() {
           ) : (
             <div style={{ textAlign: 'center', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
               <h2>Challenge: Sign this letter</h2>
-              <div style={{ fontSize: '160px', color: 'var(--accent-2)', margin: '40px 0', textShadow: '0 0 30px rgba(34,211,238,0.3)' }}>
+              <div style={{ 
+                fontSize: '160px', 
+                color: showTestSuccess ? '#4ade80' : 'var(--accent-2)', 
+                margin: '40px 0', 
+                textShadow: showTestSuccess ? '0 0 40px rgba(74,222,128,0.5)' : '0 0 30px rgba(34,211,238,0.3)',
+                transition: 'all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
+                transform: showTestSuccess ? 'scale(1.1)' : 'scale(1)'
+              }}>
                 {testTarget}
               </div>
+              
+              {showTestSuccess && (
+                <div style={{ 
+                  color: '#4ade80', 
+                  fontSize: '32px', 
+                  fontWeight: 'bold', 
+                  marginBottom: '20px',
+                  animation: 'bounce 0.5s ease infinite alternate'
+                }}>
+                  ✨ Correct! +1 ✨
+                </div>
+              )}
+
               <div style={{ fontSize: '24px', marginBottom: '20px' }}>
                 Score: <span style={{ color: 'var(--accent-2)', fontWeight: 'bold' }}>{score}</span>
               </div>
-              <p style={{ color: 'var(--muted)' }}>Hold the sign correctly for 1 second to score!</p>
+              
+              {canSkip && !showTestSuccess && (
+                <div style={{ 
+                  marginTop: '10px',
+                  padding: '16px',
+                  background: 'rgba(255,255,255,0.05)',
+                  borderRadius: '12px',
+                  border: '1px dashed #3d4a71'
+                }}>
+                  <p style={{ color: 'var(--muted)', fontSize: '14px', marginBottom: '12px' }}>Stuck? You can get a hint or skip this one.</p>
+                  <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+                    <button className="secondary" onClick={() => setShowHint(!showHint)}>
+                      {showHint ? "Hide Hint" : "Get Hint"}
+                    </button>
+                    <button className="secondary" onClick={nextTestItem}>
+                      Skip Letter
+                    </button>
+                  </div>
+                  {showHint && (
+                    <div style={{ 
+                      marginTop: '12px', 
+                      fontSize: '15px', 
+                      lineHeight: '1.4', 
+                      color: 'var(--accent-2)',
+                      background: 'rgba(34,211,238,0.1)',
+                      padding: '10px',
+                      borderRadius: '8px'
+                    }}>
+                      {DESCRIPTIONS[testTarget]}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <p style={{ color: 'var(--muted)', marginTop: canSkip ? '20px' : '0' }}>Hold the sign correctly for 1 second to score!</p>
               <button className="secondary" onClick={() => setMode("learn")} style={{ marginTop: '20px' }}>Exit Test</button>
             </div>
           )}
