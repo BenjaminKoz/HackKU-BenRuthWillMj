@@ -11,7 +11,7 @@ const SUGGESTION_THRESHOLD = 0.40;
 
 export function SentenceGame() {
   const [sentence, setSentence] = useState("");
-  const [targetWord, setTargetWord] = useState("");
+  const [possibleWords, setPossibleWords] = useState<string[]>([]);
   const [buffer, setBuffer] = useState("");
   const [loading, setLoading] = useState(true);
   const [validating, setValidating] = useState(false);
@@ -34,10 +34,11 @@ export function SentenceGame() {
     setResult(null);
     setBuffer("");
     setSuggestion(null);
+    setPossibleWords([]);
     try {
       const data = await generateSentence();
       setSentence(data.sentence_with_blank);
-      setTargetWord(data.target_word);
+      setPossibleWords(data.possible_words);
     } catch (e) {
       setStatus("Error fetching sentence");
     } finally {
@@ -154,7 +155,7 @@ export function SentenceGame() {
           borderRadius: '20px',
           border: '1px solid rgba(34, 211, 238, 0.3)'
         }}>
-          <span style={{ fontSize: '14px' }}>✨</span> Powered by Gemini
+          Interactive Learning
         </div>
       </div>
 
@@ -189,8 +190,8 @@ export function SentenceGame() {
         <div className="panel" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           {loading ? (
             <div style={{ textAlign: 'center', padding: '40px' }}>
-              <div style={{ animation: 'bounce 1s infinite', fontSize: '24px', marginBottom: '10px' }}>✨</div>
-              Gemini is generating a sentence...
+              <div style={{ animation: 'bounce 1s infinite', fontSize: '24px', marginBottom: '10px' }}>📝</div>
+              Loading next sentence...
             </div>
           ) : (
             <>
@@ -221,11 +222,34 @@ export function SentenceGame() {
                 <div className="buffer" style={{ fontSize: '32px', textAlign: 'center', letterSpacing: '4px' }}>
                   {buffer || <span style={{ color: '#4b5563' }}>START SIGNING...</span>}
                 </div>
+                <div style={{ marginTop: '16px' }}>
+                  <div style={{ fontSize: '13px', color: 'var(--muted)', marginBottom: '10px', textAlign: 'center' }}>
+                    Possible words
+                  </div>
+                  <div className="row" style={{ flexWrap: 'wrap', justifyContent: 'center', gap: '10px' }}>
+                    {possibleWords.map((word) => (
+                      <button
+                        key={word}
+                        className="secondary"
+                        onClick={() => setBuffer(word)}
+                        type="button"
+                        style={{
+                          fontSize: '13px',
+                          letterSpacing: '1px',
+                          padding: '8px 12px',
+                          opacity: buffer === word ? 1 : 0.85,
+                        }}
+                      >
+                        {word}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <div className="row" style={{ justifyContent: 'center', marginTop: '16px' }}>
                   <button className="secondary" onClick={onBackspace}>Backspace</button>
                   <button className="secondary" onClick={onClear}>Clear</button>
                   <button onClick={onCheck} disabled={!buffer || validating}>
-                    {validating ? "Gemini is checking..." : "Check Answer"}
+                    {validating ? "Checking..." : "Check Answer"}
                   </button>
                 </div>
               </div>

@@ -1,27 +1,38 @@
-import os
-import json
-from typing import Optional
-from fastapi import APIRouter, HTTPException
+import random
+from typing import List
+from fastapi import APIRouter
 from pydantic import BaseModel
-import google.generativeai as genai
 
 router = APIRouter()
 
-_model = None
-
-def _get_model():
-    global _model
-    if _model is None:
-        key = os.getenv("GEMINI_API_KEY")
-        if not key:
-            raise HTTPException(status_code=503, detail="GEMINI_API_KEY not set")
-        genai.configure(api_key=key)
-        _model = genai.GenerativeModel("gemini-2.5-flash")
-    return _model
+# Preloaded dataset of sentences and valid answers
+SENTENCES = [
+    {"s": "The dog was chasing the ___.", "v": ["CAT", "BALL", "SQUIRREL", "CAR", "BIRD", "RABBIT"]},
+    {"s": "I like to eat a red ___.", "v": ["APPLE", "CHERRY", "BERRY", "TOMATO", "FRUIT"]},
+    {"s": "The sun is a hot ___.", "v": ["STAR", "BALL", "LIGHT", "FIRE", "CORE"]},
+    {"s": "Please open the ___.", "v": ["DOOR", "WINDOW", "BOX", "BOOK", "JAR", "CAN"]},
+    {"s": "The blue ___ is in the sky.", "v": ["BIRD", "PLANE", "KITE", "CLOUD", "MOON"]},
+    {"s": "I drink water from a ___.", "v": ["CUP", "GLASS", "MUG", "BOTTLE", "BOWL"]},
+    {"s": "The cat sat on the ___.", "v": ["MAT", "RUG", "COUCH", "CHAIR", "TABLE", "FLOOR", "LAP"]},
+    {"s": "She wears a hat on her ___.", "v": ["HEAD", "HAIR", "FACE"]},
+    {"s": "I write with a pen on ___.", "v": ["PAPER", "BOOK", "DESK", "PAGE"]},
+    {"s": "The fish swims in the ___.", "v": ["WATER", "LAKE", "SEA", "OCEAN", "POND", "TANK"]},
+    {"s": "A big elephant has a long ___.", "v": ["TRUNK", "NOSE", "TAIL"]},
+    {"s": "He drives a fast red ___.", "v": ["CAR", "TRUCK", "VAN", "BIKE", "MOTOR"]},
+    {"s": "The tree has green ___.", "v": ["LEAVES", "LEAF", "FRUIT", "BRANCH", "WOOD"]},
+    {"s": "I sleep in a warm ___.", "v": ["BED", "ROOM", "HOUSE", "BAG", "TENT"]},
+    {"s": "The rain falls from the ___.", "v": ["SKY", "CLOUD", "TOP"]},
+    {"s": "You use a key to open a ___.", "v": ["LOCK", "DOOR", "GATE", "SAFE", "BOX"]},
+    {"s": "A monkey likes to eat a ___.", "v": ["BANANA", "FRUIT", "NUT", "BERRY"]},
+    {"s": "I can see with my two ___.", "v": ["EYES", "SIGHT", "LENS"]},
+    {"s": "The baker makes fresh ___.", "v": ["BREAD", "CAKE", "PIE", "FOOD", "ROLLS"]},
+    {"s": "We play music on a ___.", "v": ["PIANO", "DRUM", "GUITAR", "FLUTE", "HORN", "STAGE"]}
+]
 
 class GenerateSentenceResponse(BaseModel):
     sentence_with_blank: str
     target_word: str
+    possible_words: List[str]
 
 class ValidateRequest(BaseModel):
     sentence_with_blank: str
@@ -31,58 +42,44 @@ class ValidateResponse(BaseModel):
     is_correct: bool
     explanation: str
 
-GENERATE_PROMPT = (
-    "Generate a simple English sentence with one common noun or verb replaced by a blank '___'. "
-    "The sentence should be easy to understand and have a clear missing part that could be filled by multiple logical words. "
-    "Provide the response in JSON format with two keys: 'sentence_with_blank' and 'example_word'. "
-    "Example: {\"sentence_with_blank\": \"The dog was chasing the ___.\", \"example_word\": \"CAT\"}. "
-    "Make sure the example word is simple to spell (3-7 letters)."
-)
-
-VALIDATE_PROMPT = (
-    "You are an English teacher. A user is playing a game where they fill in a blank in a sentence. "
-    "Sentence: {sentence}\n"
-    "User's word: {user_word}\n\n"
-    "Check if the user's word makes sense grammatically and semantically in the context of the sentence. "
-    "Be encouraging. If the word fits reasonably well, it's correct. "
-    "Provide the response in JSON format with two keys: 'is_correct' (boolean) and 'explanation' (short string explaining why it fits or why it doesn't)."
-)
-
 @router.get("/sentence-game/generate", response_model=GenerateSentenceResponse)
 def generate_sentence():
-    model = _get_model()
-    try:
-        resp = model.generate_content(GENERATE_PROMPT)
-        # Handle potential markdown in response
-        text = resp.text.strip()
-        if text.startswith("```json"):
-            text = text[7:-3].strip()
-        data = json.loads(text)
-        # Map example_word to target_word for frontend compatibility if needed, 
-        # but the frontend will just treat it as an example.
-        return GenerateSentenceResponse(
-            sentence_with_blank=data["sentence_with_blank"],
-            target_word=data["example_word"]
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gemini Error: {str(e)}")
+    item = random.choice(SENTENCES)
+    possible_words = item["v"][:]
+    random.shuffle(possible_words)
+    return GenerateSentenceResponse(
+        sentence_with_blank=item["s"],
+        target_word=item["v"][0],
+        possible_words=possible_words,
+    )
 
 @router.post("/sentence-game/validate", response_model=ValidateResponse)
 def validate_word(req: ValidateRequest):
-    model = _get_model()
-    try:
-        prompt = VALIDATE_PROMPT.format(
-            sentence=req.sentence_with_blank,
-            user_word=req.user_word
+    user_word = req.user_word.upper().strip()
+    
+    # Find the sentence in our dataset
+    valid_words = []
+    for item in SENTENCES:
+        if item["s"] == req.sentence_with_blank:
+            valid_words = item["v"]
+            break
+    
+    if not valid_words:
+        # Fallback if sentence wasn't found (shouldn't happen)
+        is_correct = len(user_word) >= 3
+        return ValidateResponse(
+            is_correct=is_correct,
+            explanation="That fits!" if is_correct else "Try a longer word."
         )
-        resp = model.generate_content(prompt)
-        text = resp.text.strip()
-        if text.startswith("```json"):
-            text = text[7:-3].strip()
-        data = json.loads(text)
-        return ValidateResponse(**data)
-    except Exception as e:
+
+    if user_word in valid_words:
+        return ValidateResponse(
+            is_correct=True,
+            explanation=f"Yes! '{user_word}' fits perfectly."
+        )
+    else:
+        example = random.choice(valid_words)
         return ValidateResponse(
             is_correct=False,
-            explanation="I couldn't quite check that. Try again!"
+            explanation=f"Not quite. A word like '{example}' would fit well here."
         )

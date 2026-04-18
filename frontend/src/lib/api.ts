@@ -65,7 +65,11 @@ export async function speak(text: string): Promise<Blob> {
   return res.blob();
 }
 
-export async function generateSentence(): Promise<{ sentence_with_blank: string; target_word: string }> {
+export async function generateSentence(): Promise<{
+  sentence_with_blank: string;
+  target_word: string;
+  possible_words: string[];
+}> {
   const res = await fetch(url("/api/sentence-game/generate"));
   if (!res.ok) throw new Error(`generateSentence failed: ${res.status}`);
   return res.json();

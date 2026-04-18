@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/main.tsx","./src/components/webcam.tsx","./src/hooks/usehandlandmarker.ts","./src/lib/api.ts"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/game.tsx","./src/learning.tsx","./src/sentencegame.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/webcam.tsx","./src/hooks/usehandlandmarker.ts","./src/lib/api.ts","./src/lib/challenges.ts"],"version":"5.9.3"}

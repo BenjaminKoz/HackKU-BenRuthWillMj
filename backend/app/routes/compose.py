@@ -17,7 +17,7 @@ def _get_model():
         if not key:
             raise HTTPException(status_code=503, detail="GEMINI_API_KEY not set")
         genai.configure(api_key=key)
-        _model = genai.GenerativeModel("gemini-2.5-flash")
+        _model = genai.GenerativeModel("gemini-1.5-flash")
     return _model
 
 
