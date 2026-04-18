@@ -33,7 +33,7 @@ from sklearn.metrics import classification_report
 
 # Ensure `app.services.features` is importable when this script is run directly.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from app.services.features import FEATURE_VERSION, build_features  # noqa: E402
+from app.services.features import FEATURE_VERSION, build_features, mirror_landmarks  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL_OUT = ROOT / "models" / "asl_classifier.joblib"
@@ -42,7 +42,8 @@ CSV_CAPTURE = DATA_DIR / "landmarks.csv"
 CSV_IMAGES = DATA_DIR / "landmarks_images.csv"
 
 
-def read_csv(path: Path) -> Iterable[Tuple[str, np.ndarray]]:
+def read_csv_raw(path: Path) -> Iterable[Tuple[str, np.ndarray]]:
+    """Yield (label, 21x3 raw landmarks) for each row."""
     if not path.exists():
         return
     with path.open(newline="") as f:
@@ -51,7 +52,7 @@ def read_csv(path: Path) -> Iterable[Tuple[str, np.ndarray]]:
                 continue
             label = row[0]
             pts = np.array(row[1:], dtype=np.float32).reshape(21, 3)
-            yield label, build_features(pts)
+            yield label, pts
 
 
 _WORKER_HANDS = None  # per-process MediaPipe Hands, initialized lazily in each worker
@@ -140,24 +141,33 @@ def extract_landmarks_from_images(
 
 
 def load_features(
-    skip_labels: set[str],
+    skip_labels: set[str], mirror_augment: bool = True,
 ) -> tuple[np.ndarray, List[str], np.ndarray]:
-    """Returns (X, y, is_user_sample) — is_user_sample[i] is True if that row came
-    from the user's capture.py CSV (should be weighted higher than Kaggle rows)."""
+    """Returns (X, y, is_user_sample). If mirror_augment is True, each raw sample
+    produces two rows: the original and its horizontal mirror, so the classifier
+    learns both left- and right-hand orientations."""
     X, y, is_user = [], [], []
     for src, from_user in ((CSV_CAPTURE, True), (CSV_IMAGES, False)):
         if not src.exists():
             continue
-        count = 0
-        for label, feats in read_csv(src):
+        raw_count = 0
+        for label, pts in read_csv_raw(src):
             if label in skip_labels:
                 continue
-            X.append(feats)
+            X.append(build_features(pts))
             y.append(label)
             is_user.append(from_user)
-            count += 1
-        print(f"Loaded {count} rows from {src.name} "
-              f"({'user capture — will be weighted up' if from_user else 'Kaggle'})")
+            if mirror_augment:
+                X.append(build_features(mirror_landmarks(pts)))
+                y.append(label)
+                is_user.append(from_user)
+            raw_count += 1
+        tag = "user capture — will be weighted up" if from_user else "Kaggle"
+        if mirror_augment:
+            print(f"Loaded {raw_count} rows from {src.name} ({tag}); "
+                  f"augmented to {raw_count * 2} via mirror flip")
+        else:
+            print(f"Loaded {raw_count} rows from {src.name} ({tag})")
     if not X:
         raise SystemExit(
             "No training data found. Run capture.py or pass --images PATH."
@@ -177,6 +187,9 @@ def main():
     parser.add_argument("--user-weight", type=float, default=50.0,
                         help="How many 'Kaggle samples' one of your own captures "
                              "counts as. 50 means 1 user sample ≈ 50 Kaggle samples.")
+    parser.add_argument("--no-mirror-augment", action="store_true",
+                        help="Disable horizontal-flip augmentation. Off by default; "
+                             "enable this flag to train single-handedness only.")
     parser.add_argument("--skip-labels", type=str, default="",
                         help="Comma-separated labels to exclude (e.g. nothing,space,del)")
     parser.add_argument("--rebuild-image-cache", action="store_true",
@@ -194,7 +207,7 @@ def main():
                   "(pass --rebuild-image-cache to regenerate)")
 
     skip = {s.strip() for s in args.skip_labels.split(",") if s.strip()}
-    X, y, is_user = load_features(skip)
+    X, y, is_user = load_features(skip, mirror_augment=not args.no_mirror_augment)
 
     labels = sorted(set(y))
     label_to_idx = {lbl: i for i, lbl in enumerate(labels)}

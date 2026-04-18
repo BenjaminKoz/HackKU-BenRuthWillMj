@@ -42,6 +42,18 @@ def _normalize(points: np.ndarray) -> np.ndarray:
     return pts / scale
 
 
+def mirror_landmarks(points: Sequence[Sequence[float]] | np.ndarray) -> np.ndarray:
+    """Horizontally flip raw MediaPipe landmarks (x in [0, 1] image space).
+
+    Used as a training-time data augmentation so the classifier learns both
+    left- and right-hand orientations. Flipping x: x -> 1 - x; y and z are
+    unchanged.
+    """
+    arr = np.asarray(points, dtype=np.float32).reshape(21, 3).copy()
+    arr[:, 0] = 1.0 - arr[:, 0]
+    return arr
+
+
 def build_features(points: Sequence[Sequence[float]] | np.ndarray) -> np.ndarray:
     """Return a 1-D feature vector of length 83."""
     arr = np.asarray(points, dtype=np.float32).reshape(21, 3)
