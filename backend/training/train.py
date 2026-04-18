@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import multiprocessing as mp
+import os
 import random
 import time
 from pathlib import Path
@@ -54,53 +56,87 @@ def read_csv(path: Path) -> Iterable[Tuple[str, np.ndarray]]:
             yield label, normalize(pts)
 
 
-def extract_landmarks_from_images(
-    folder: Path, samples_per_class: int | None, out_csv: Path
-) -> None:
-    """Run MediaPipe on images, cache (label, 63 floats) rows to out_csv."""
-    import cv2
-    import mediapipe as mp
+_WORKER_HANDS = None  # per-process MediaPipe Hands, initialized lazily in each worker
 
+
+def _worker_init():
+    import mediapipe as mp_lib
+    global _WORKER_HANDS
+    _WORKER_HANDS = mp_lib.solutions.hands.Hands(
+        static_image_mode=True, max_num_hands=1, min_detection_confidence=0.5
+    )
+
+
+def _worker_process(item: Tuple[str, str]):
+    """Return (label, 63-long list of floats) or (label, None) if no hand detected."""
+    import cv2
+    label, img_path = item
+    img = cv2.imread(img_path)
+    if img is None:
+        return label, None
+    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    res = _WORKER_HANDS.process(rgb)
+    if not res.multi_hand_landmarks:
+        return label, None
+    lms = res.multi_hand_landmarks[0].landmark
+    floats = []
+    for lm in lms:
+        floats.extend([lm.x, lm.y, lm.z])
+    return label, floats
+
+
+def extract_landmarks_from_images(
+    folder: Path, samples_per_class: int | None, out_csv: Path, workers: int | None = None
+) -> None:
+    """Run MediaPipe on images in parallel, cache (label, 63 floats) rows to out_csv."""
     out_csv.parent.mkdir(parents=True, exist_ok=True)
-    hands = mp.solutions.hands.Hands(static_image_mode=True, max_num_hands=1,
-                                     min_detection_confidence=0.5)
 
     class_dirs = sorted(p for p in folder.iterdir() if p.is_dir())
     if not class_dirs:
         raise SystemExit(f"No class subdirectories in {folder}")
 
-    total_written = 0
+    jobs: List[Tuple[str, str]] = []
+    per_class_totals: dict[str, int] = {}
+    for class_dir in class_dirs:
+        label = class_dir.name
+        imgs = sorted(class_dir.glob("*.jp*g")) + sorted(class_dir.glob("*.png"))
+        if samples_per_class and len(imgs) > samples_per_class:
+            random.seed(42)
+            imgs = random.sample(imgs, samples_per_class)
+        per_class_totals[label] = len(imgs)
+        for p in imgs:
+            jobs.append((label, str(p)))
+
+    if workers is None:
+        workers = max(1, (os.cpu_count() or 2) - 1)
+    print(f"Extracting landmarks from {len(jobs)} images across {len(class_dirs)} classes "
+          f"using {workers} workers")
+
+    kept: dict[str, int] = {lbl: 0 for lbl in per_class_totals}
+    skipped: dict[str, int] = {lbl: 0 for lbl in per_class_totals}
+
     t0 = time.time()
+    done = 0
     with out_csv.open("w", newline="") as f:
         writer = csv.writer(f)
-        for class_dir in class_dirs:
-            label = class_dir.name
-            imgs = sorted(class_dir.glob("*.jp*g")) + sorted(class_dir.glob("*.png"))
-            if samples_per_class and len(imgs) > samples_per_class:
-                random.seed(42)
-                imgs = random.sample(imgs, samples_per_class)
+        with mp.Pool(processes=workers, initializer=_worker_init) as pool:
+            for label, floats in pool.imap_unordered(_worker_process, jobs, chunksize=8):
+                done += 1
+                if floats is None:
+                    skipped[label] += 1
+                else:
+                    row = [label] + [f"{v:.6f}" for v in floats]
+                    writer.writerow(row)
+                    kept[label] += 1
+                if done % 250 == 0 or done == len(jobs):
+                    rate = done / max(time.time() - t0, 1e-6)
+                    eta = (len(jobs) - done) / max(rate, 1e-6)
+                    print(f"  {done}/{len(jobs)}  ({rate:.0f} img/s, ETA {eta:.0f}s)")
 
-            class_written = 0
-            class_skipped = 0
-            for i, img_path in enumerate(imgs):
-                img = cv2.imread(str(img_path))
-                if img is None:
-                    class_skipped += 1
-                    continue
-                rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                res = hands.process(rgb)
-                if not res.multi_hand_landmarks:
-                    class_skipped += 1
-                    continue
-                lms = res.multi_hand_landmarks[0].landmark
-                row = [label]
-                for lm in lms:
-                    row.extend([f"{lm.x:.6f}", f"{lm.y:.6f}", f"{lm.z:.6f}"])
-                writer.writerow(row)
-                class_written += 1
-            print(f"  {label:>7}: kept {class_written}, skipped {class_skipped} (no hand)")
-            total_written += class_written
-
+    total_written = sum(kept.values())
+    print()
+    for label in sorted(kept):
+        print(f"  {label:>7}: kept {kept[label]:>4}, skipped {skipped[label]:>4}")
     elapsed = time.time() - t0
     print(f"Cached {total_written} landmark rows to {out_csv} in {elapsed:.1f}s")
 
@@ -131,6 +167,8 @@ def main():
                         help="Folder like data/asl_alphabet_train/<LABEL>/*.jpg")
     parser.add_argument("--samples-per-class", type=int, default=300,
                         help="Max images sampled per class during extraction")
+    parser.add_argument("--workers", type=int, default=None,
+                        help="Parallel workers for extraction (default: cpu_count - 1)")
     parser.add_argument("--trees", type=int, default=300)
     parser.add_argument("--skip-labels", type=str, default="",
                         help="Comma-separated labels to exclude (e.g. nothing,space,del)")
@@ -141,7 +179,9 @@ def main():
     if args.images:
         if args.rebuild_image_cache or not CSV_IMAGES.exists():
             print(f"Extracting landmarks from {args.images} (max {args.samples_per_class}/class)")
-            extract_landmarks_from_images(args.images, args.samples_per_class, CSV_IMAGES)
+            extract_landmarks_from_images(
+                args.images, args.samples_per_class, CSV_IMAGES, workers=args.workers
+            )
         else:
             print(f"Using cached image landmarks at {CSV_IMAGES} "
                   "(pass --rebuild-image-cache to regenerate)")
