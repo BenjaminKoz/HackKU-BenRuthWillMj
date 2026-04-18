@@ -23,8 +23,9 @@ dist/
 *.joblib
 backend/models/*.pkl
 backend/models/*.joblib
-data/
+data/*
 !data/.gitkeep
+!data/landmarks.csv
 
 # OS
 .DS_Store
