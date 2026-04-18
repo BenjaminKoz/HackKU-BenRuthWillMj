@@ -7,7 +7,9 @@ const WORDS = ["APPLE", "BANANA", "CHERRY", "DRAGON", "EAGLE", "FLOWER", "GALAXY
 const MAX_LIVES = 6;
 const CLASSIFY_INTERVAL_MS = 300;
 const STABLE_FRAMES_TO_COMMIT = 5;
-const MIN_CONFIDENCE = 0.75;
+const STABLE_FRAMES_TO_SUGGEST = 8; // ~2.4s of stability
+const MIN_CONFIDENCE = 0.60;
+const SUGGESTION_THRESHOLD = 0.40;
 
 export function Game() {
   const [word, setWord] = useState("");
@@ -20,10 +22,12 @@ export function Game() {
   const [currentLetter, setCurrentLetter] = useState<string>("-");
   const [confidence, setConfidence] = useState(0);
   const [status, setStatus] = useState("Waiting for hand…");
+  const [suggestion, setSuggestion] = useState<string | null>(null);
   
   const lastLandmarksRef = useRef<Landmark[] | null>(null);
   const lastClassifyRef = useRef(0);
   const stableLetterRef = useRef<{ letter: string; count: number }>({ letter: "", count: 0 });
+  const stableSuggestionRef = useRef<{ letter: string; count: number }>({ letter: "", count: 0 });
   const inflightRef = useRef(false);
 
   const initGame = useCallback(() => {
@@ -33,6 +37,9 @@ export function Game() {
     setLives(MAX_LIVES);
     setGameOver(false);
     setWon(false);
+    setSuggestion(null);
+    stableLetterRef.current = { letter: "", count: 0 };
+    stableSuggestionRef.current = { letter: "", count: 0 };
   }, []);
 
   useEffect(() => {
@@ -44,6 +51,8 @@ export function Game() {
     
     const newGuessed = [...guessed, letter];
     setGuessed(newGuessed);
+    setSuggestion(null);
+    stableSuggestionRef.current = { letter: "", count: 0 };
     
     if (!word.includes(letter)) {
       const newLives = lives - 1;
@@ -75,6 +84,7 @@ export function Game() {
         setConfidence(conf);
         
         if (conf >= MIN_CONFIDENCE && upperLetter !== "NOTHING") {
+          // Auto-guess logic
           const prev = stableLetterRef.current;
           if (prev.letter === upperLetter) {
             prev.count += 1;
@@ -84,8 +94,34 @@ export function Game() {
           
           if (stableLetterRef.current.count === STABLE_FRAMES_TO_COMMIT) {
             makeGuess(upperLetter);
-            stableLetterRef.current = { letter: "", count: 0 }; // Reset after guess
+            stableLetterRef.current = { letter: "", count: 0 };
           }
+          
+          // Reset suggestion tracking
+          setSuggestion(null);
+          stableSuggestionRef.current = { letter: "", count: 0 };
+
+        } else if (conf >= SUGGESTION_THRESHOLD && upperLetter !== "NOTHING" && !guessed.includes(upperLetter)) {
+          // Suggestion logic with stability check
+          const prevS = stableSuggestionRef.current;
+          if (prevS.letter === upperLetter) {
+            prevS.count += 1;
+          } else {
+            stableSuggestionRef.current = { letter: upperLetter, count: 1 };
+          }
+
+          if (stableSuggestionRef.current.count >= STABLE_FRAMES_TO_SUGGEST) {
+            setSuggestion(upperLetter);
+          }
+          
+          // Reset auto-guess tracking
+          stableLetterRef.current = { letter: "", count: 0 };
+
+        } else {
+          // Reset everything if confidence is too low or "NOTHING"
+          setSuggestion(null);
+          stableLetterRef.current = { letter: "", count: 0 };
+          stableSuggestionRef.current = { letter: "", count: 0 };
         }
         setStatus("Tracking");
       } catch (e) {
@@ -95,7 +131,7 @@ export function Game() {
       }
     }, 100);
     return () => clearInterval(id);
-  }, [makeGuess, gameOver, won]);
+  }, [makeGuess, gameOver, won, guessed]);
 
   const displayWord = word.split("").map(l => (guessed.includes(l) ? l : "_")).join(" ");
 
@@ -113,6 +149,26 @@ export function Game() {
           <div className="letter-big">{currentLetter}</div>
           <div className="confidence">confidence {(confidence * 100).toFixed(0)}%</div>
           <div className="status">{status}</div>
+
+          {suggestion && !gameOver && !won && (
+            <div style={{
+              marginTop: '20px',
+              padding: '15px',
+              backgroundColor: 'rgba(59, 130, 246, 0.1)',
+              border: '2px dashed #3b82f6',
+              borderRadius: '12px',
+              textAlign: 'center',
+              animation: 'pulse 2s infinite'
+            }}>
+              <p style={{ margin: '0 0 10px 0', fontSize: '16px' }}>Could it be <strong>{suggestion}</strong>?</p>
+              <button 
+                onClick={() => makeGuess(suggestion)}
+                style={{ padding: '8px 20px', fontSize: '14px' }}
+              >
+                Yes, guess "{suggestion}"
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="panel" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
