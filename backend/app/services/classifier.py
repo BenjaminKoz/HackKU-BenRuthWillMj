@@ -1,5 +1,6 @@
+from collections import deque
 from pathlib import Path
-from typing import List, Tuple
+from typing import Deque, List, Tuple
 
 import numpy as np
 import joblib
@@ -8,7 +9,13 @@ from app.services.features import FEATURE_VERSION, build_features
 
 MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "asl_classifier.joblib"
 
+# Number of recent probability vectors to average. At ~30fps this is ~0.3s of
+# context — long enough to filter per-frame noise, short enough that transitions
+# between signs still feel responsive.
+SMOOTH_WINDOW = 8
+
 _bundle = None
+_probs_buffer: Deque[np.ndarray] = deque(maxlen=SMOOTH_WINDOW)
 
 
 def _load():
@@ -36,5 +43,14 @@ def classify_landmarks(points: List[Tuple[float, float, float]]) -> Tuple[str, f
     labels = bundle["labels"]
     features = build_features(points).reshape(1, -1)
     probs = model.predict_proba(features)[0]
-    idx = int(np.argmax(probs))
-    return labels[idx], float(probs[idx])
+
+    _probs_buffer.append(probs)
+    smoothed = np.mean(_probs_buffer, axis=0)
+    idx = int(np.argmax(smoothed))
+    return labels[idx], float(smoothed[idx])
+
+
+def reset_smoothing() -> None:
+    """Clear the probability buffer. The frontend should call this when the hand
+    leaves the frame so a stale sign doesn't bleed into the next one."""
+    _probs_buffer.clear()

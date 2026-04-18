@@ -14,8 +14,11 @@ coords. We then:
          ring, pinky). The index-middle distance is the primary U/V discriminator.
        - 5 fingertip-to-wrist distances (how "extended" each finger is).
        - 5 PIP-joint-to-tip distances (how "bent" each finger is).
+       - 3-component palm normal vector. Distinguishes letters that share finger
+         shape but differ in orientation: G (palm sideways) vs Q (palm down), and
+         P (palm down) vs K (palm forward).
 
-Final feature length: 63 + 10 + 5 + 5 = 83.
+Final feature length: 63 + 10 + 5 + 5 + 3 = 86.
 """
 from __future__ import annotations
 
@@ -24,12 +27,14 @@ from typing import Sequence
 
 import numpy as np
 
-FEATURE_VERSION = 2  # bump when the feature layout changes
+FEATURE_VERSION = 3  # bump when the feature layout changes
 
 TIPS = [4, 8, 12, 16, 20]          # thumb, index, middle, ring, pinky fingertips
 PIPS = [3, 6, 10, 14, 18]          # PIP joints (knuckle closest to the tip)
 WRIST = 0
 MIDDLE_MCP = 9
+INDEX_MCP = 5
+PINKY_MCP = 17
 
 TIP_PAIRS = list(combinations(TIPS, 2))  # 10 pairs
 
@@ -55,7 +60,7 @@ def mirror_landmarks(points: Sequence[Sequence[float]] | np.ndarray) -> np.ndarr
 
 
 def build_features(points: Sequence[Sequence[float]] | np.ndarray) -> np.ndarray:
-    """Return a 1-D feature vector of length 83."""
+    """Return a 1-D feature vector of length 86."""
     arr = np.asarray(points, dtype=np.float32).reshape(21, 3)
     pts = _normalize(arr)
 
@@ -76,4 +81,12 @@ def build_features(points: Sequence[Sequence[float]] | np.ndarray) -> np.ndarray
         dtype=np.float32,
     )  # 5
 
-    return np.concatenate([flat, tip_pair_dists, tip_to_wrist, pip_to_tip])
+    # Palm normal: cross product of (wrist -> index-MCP) and (wrist -> pinky-MCP),
+    # normalized to a unit vector. Encodes which way the palm faces.
+    n = np.cross(pts[INDEX_MCP], pts[PINKY_MCP])
+    n_mag = float(np.linalg.norm(n)) or 1.0
+    palm_normal = (n / n_mag).astype(np.float32)  # 3
+
+    return np.concatenate(
+        [flat, tip_pair_dists, tip_to_wrist, pip_to_tip, palm_normal]
+    )

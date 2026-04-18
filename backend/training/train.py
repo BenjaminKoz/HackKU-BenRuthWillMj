@@ -140,12 +140,36 @@ def extract_landmarks_from_images(
     print(f"Cached {total_written} landmark rows to {out_csv} in {elapsed:.1f}s")
 
 
+NOISE_SIGMA = 0.003            # Gaussian noise on raw landmark coords (~0.3% of image)
+ROT_DEG_RANGE = 8.0            # Small in-plane rotation; bigger would confuse G/Q, P/K
+
+
+def _jitter(pts: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """Apply small z-axis rotation around image center + Gaussian landmark noise.
+    Teaches robustness to real-world webcam jitter that the Kaggle studio photos
+    don't contain, without changing the sign's meaning."""
+    angle = rng.uniform(-ROT_DEG_RANGE, ROT_DEG_RANGE) * np.pi / 180.0
+    c, s = np.cos(angle), np.sin(angle)
+    rot = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32)
+    # Rotate around image center (0.5, 0.5) so normalized [0,1] coords stay sensible.
+    out = pts.copy().astype(np.float32)
+    out[:, :2] -= 0.5
+    out = out @ rot.T
+    out[:, :2] += 0.5
+    out += rng.normal(0.0, NOISE_SIGMA, out.shape).astype(np.float32)
+    return out
+
+
 def load_features(
-    skip_labels: set[str], mirror_augment: bool = True,
+    skip_labels: set[str], mirror_augment: bool = True, jitter_augment: bool = True,
 ) -> tuple[np.ndarray, List[str], np.ndarray]:
-    """Returns (X, y, is_user_sample). If mirror_augment is True, each raw sample
-    produces two rows: the original and its horizontal mirror, so the classifier
-    learns both left- and right-hand orientations."""
+    """Returns (X, y, is_user_sample). Augmentations, applied in order:
+    - mirror_augment: each raw sample produces an additional horizontally-flipped
+      copy (teaches left/right-hand invariance).
+    - jitter_augment: each resulting sample also produces one noisy+mildly-rotated
+      copy (teaches tolerance to webcam jitter + wrist tilt).
+    Total expansion: 2× (mirror) × 2× (jitter) = 4× the raw row count."""
+    rng = np.random.default_rng(42)
     X, y, is_user = [], [], []
     for src, from_user in ((CSV_CAPTURE, True), (CSV_IMAGES, False)):
         if not src.exists():
@@ -154,20 +178,28 @@ def load_features(
         for label, pts in read_csv_raw(src):
             if label in skip_labels:
                 continue
-            X.append(build_features(pts))
-            y.append(label)
-            is_user.append(from_user)
+            variants = [pts]
             if mirror_augment:
-                X.append(build_features(mirror_landmarks(pts)))
+                variants.append(mirror_landmarks(pts))
+            for v in variants:
+                X.append(build_features(v))
                 y.append(label)
                 is_user.append(from_user)
+                if jitter_augment:
+                    X.append(build_features(_jitter(v, rng)))
+                    y.append(label)
+                    is_user.append(from_user)
             raw_count += 1
         tag = "user capture — will be weighted up" if from_user else "Kaggle"
+        factor = (2 if mirror_augment else 1) * (2 if jitter_augment else 1)
+        aug_desc = []
         if mirror_augment:
-            print(f"Loaded {raw_count} rows from {src.name} ({tag}); "
-                  f"augmented to {raw_count * 2} via mirror flip")
-        else:
-            print(f"Loaded {raw_count} rows from {src.name} ({tag})")
+            aug_desc.append("mirror")
+        if jitter_augment:
+            aug_desc.append("jitter")
+        desc = "+".join(aug_desc) or "none"
+        print(f"Loaded {raw_count} rows from {src.name} ({tag}); "
+              f"augmented {factor}× to {raw_count * factor} via {desc}")
     if not X:
         raise SystemExit(
             "No training data found. Run capture.py or pass --images PATH."
@@ -190,6 +222,8 @@ def main():
     parser.add_argument("--no-mirror-augment", action="store_true",
                         help="Disable horizontal-flip augmentation. Off by default; "
                              "enable this flag to train single-handedness only.")
+    parser.add_argument("--no-jitter-augment", action="store_true",
+                        help="Disable noise+micro-rotation augmentation. Off by default.")
     parser.add_argument("--skip-labels", type=str, default="",
                         help="Comma-separated labels to exclude (e.g. nothing,space,del)")
     parser.add_argument("--rebuild-image-cache", action="store_true",
@@ -207,7 +241,11 @@ def main():
                   "(pass --rebuild-image-cache to regenerate)")
 
     skip = {s.strip() for s in args.skip_labels.split(",") if s.strip()}
-    X, y, is_user = load_features(skip, mirror_augment=not args.no_mirror_augment)
+    X, y, is_user = load_features(
+        skip,
+        mirror_augment=not args.no_mirror_augment,
+        jitter_augment=not args.no_jitter_augment,
+    )
 
     labels = sorted(set(y))
     label_to_idx = {lbl: i for i, lbl in enumerate(labels)}

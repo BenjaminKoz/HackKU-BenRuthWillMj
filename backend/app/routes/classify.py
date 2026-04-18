@@ -2,7 +2,7 @@ from typing import List
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.services.classifier import classify_landmarks
+from app.services.classifier import classify_landmarks, reset_smoothing
 
 router = APIRouter()
 
@@ -30,3 +30,11 @@ def classify(req: ClassifyRequest) -> ClassifyResponse:
     except FileNotFoundError as e:
         raise HTTPException(status_code=503, detail=str(e))
     return ClassifyResponse(letter=letter, confidence=confidence)
+
+
+@router.post("/classify/reset")
+def classify_reset() -> dict:
+    """Frontend calls this when the hand leaves the frame so the smoothing
+    buffer doesn't blend the previous sign into the next one."""
+    reset_smoothing()
+    return {"ok": True}
