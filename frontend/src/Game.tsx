@@ -175,6 +175,36 @@ export function Game() {
     return () => clearInterval(id);
   }, [makeGuess, gameOver, won, guessed, confirmLetter]);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (gameOver || won) return;
+
+      if (e.code === "Space") {
+        e.preventDefault(); // Prevent scrolling
+        if (confirmLetter) {
+          makeGuess(confirmLetter);
+        } else if (suggestion) {
+          makeGuess(suggestion);
+        } else if (gameHint) {
+          makeGuess(gameHint.letter);
+        }
+      } else if (e.code === "Escape") {
+        if (confirmLetter) {
+          setConfirmLetter(null);
+          stableLetterRef.current = { letter: "", count: 0 };
+        } else if (suggestion) {
+          setSuggestion(null);
+          stableSuggestionRef.current = { letter: "", count: 0 };
+        } else if (gameHint) {
+          setGameHint(null);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [confirmLetter, suggestion, gameHint, makeGuess, gameOver, won]);
+
   const displayWord = word.split("").map(l => (guessed.includes(l) ? l : "_")).join(" ");
 
   return (
@@ -209,13 +239,13 @@ export function Game() {
                    onClick={() => setGameHint(null)}
                    style={{ padding: '8px 16px' }}
                 >
-                  I'll sign it!
+                  Cancel [Esc]
                 </button>
                 <button 
                   onClick={() => makeGuess(gameHint.letter)}
                   style={{ padding: '8px 16px', backgroundColor: '#334155' }}
                 >
-                  Guess anyway
+                  Guess [Space]
                 </button>
               </div>
             </div>
@@ -240,7 +270,7 @@ export function Game() {
                   onClick={() => makeGuess(confirmLetter)}
                   style={{ padding: '10px 30px', fontSize: '16px' }}
                 >
-                  Yes, Guess!
+                  Yes [Space]
                 </button>
                 <button 
                   className="secondary"
@@ -250,7 +280,7 @@ export function Game() {
                   }}
                   style={{ padding: '10px 20px', fontSize: '16px' }}
                 >
-                  No, Try Again
+                  No [Esc]
                 </button>
               </div>
             </div>
@@ -267,12 +297,24 @@ export function Game() {
               animation: 'pulse 2s infinite'
             }}>
               <p style={{ margin: '0 0 10px 0', fontSize: '16px' }}>Could it be <strong>{suggestion}</strong>?</p>
-              <button 
-                onClick={() => makeGuess(suggestion)}
-                style={{ padding: '8px 20px', fontSize: '14px' }}
-              >
-                Yes, guess "{suggestion}"
-              </button>
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+                <button 
+                  onClick={() => makeGuess(suggestion)}
+                  style={{ padding: '8px 20px', fontSize: '14px' }}
+                >
+                  Yes [Space]
+                </button>
+                <button 
+                  className="secondary"
+                  onClick={() => {
+                    setSuggestion(null);
+                    stableSuggestionRef.current = { letter: "", count: 0 };
+                  }}
+                  style={{ padding: '8px 20px', fontSize: '14px' }}
+                >
+                  Dismiss [Esc]
+                </button>
+              </div>
             </div>
           )}
 

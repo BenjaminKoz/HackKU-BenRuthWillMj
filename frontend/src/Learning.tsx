@@ -189,6 +189,25 @@ export function Learning() {
     return () => clearInterval(id);
   }, [mode, activeLetter, testTarget, nextTestItem]);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === "Space") {
+        if (suggestion) {
+          e.preventDefault();
+          handleSuggestionClick();
+        }
+      } else if (e.code === "Escape") {
+        if (suggestion) {
+          setSuggestion(null);
+          stableSuggestionRef.current = { letter: "", count: 0 };
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [suggestion, handleSuggestionClick]);
+
   return (
     <div className="app">
       <div className="header">
@@ -212,12 +231,24 @@ export function Learning() {
               animation: 'pulse 2s infinite'
             }}>
               <span style={{ fontSize: '14px' }}>Could it be <strong>{suggestion}</strong>?</span>
-              <button 
-                onClick={handleSuggestionClick}
-                style={{ marginLeft: '10px', padding: '4px 12px', fontSize: '12px' }}
-              >
-                {mode === "learn" ? `Switch to ${suggestion}` : `Guess ${suggestion}`}
-              </button>
+              <div style={{ marginTop: '10px', display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                <button 
+                  onClick={handleSuggestionClick}
+                  style={{ padding: '4px 12px', fontSize: '12px' }}
+                >
+                  {mode === "learn" ? `Switch to ${suggestion} [Space]` : `Guess ${suggestion} [Space]`}
+                </button>
+                <button 
+                  className="secondary"
+                  onClick={() => {
+                    setSuggestion(null);
+                    stableSuggestionRef.current = { letter: "", count: 0 };
+                  }}
+                  style={{ padding: '4px 12px', fontSize: '12px' }}
+                >
+                  Dismiss [Esc]
+                </button>
+              </div>
             </div>
           )}
           <h2>Practice Area</h2>
