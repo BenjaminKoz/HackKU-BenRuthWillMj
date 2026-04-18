@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Webcam } from "./components/Webcam";
+import type { Landmark } from "./hooks/useHandLandmarker";
+import { classify } from "./lib/api";
 
 const LETTERS = [
   "A", "B", "C", "D", "E", "F", "G", "H", "I", "J",
@@ -36,40 +39,139 @@ const DESCRIPTIONS: Record<string, string> = {
 };
 
 export function Learning() {
+  const [mode, setMode] = useState<"learn" | "test">("learn");
   const [activeLetter, setActiveLetter] = useState("A");
+  const [testTarget, setTestTarget] = useState("");
+  const [score, setScore] = useState(0);
+  
+  // Real-time feedback state
+  const [detectedLetter, setDetectedLetter] = useState("-");
+  const [confidence, setConfidence] = useState(0);
+  const [isCorrect, setIsCorrect] = useState(false);
+  const [status, setStatus] = useState("Waiting for hand…");
+
+  const lastLandmarksRef = useRef<Landmark[] | null>(null);
+  const lastClassifyRef = useRef(0);
+  const inflightRef = useRef(false);
+
+  const startTest = useCallback(() => {
+    setMode("test");
+    const next = LETTERS[Math.floor(Math.random() * LETTERS.length)];
+    setTestTarget(next);
+    setScore(0);
+  }, []);
+
+  const nextTestItem = useCallback(() => {
+    const next = LETTERS[Math.floor(Math.random() * LETTERS.length)];
+    setTestTarget(next);
+  }, []);
+
+  const handleLandmarks = useCallback((lms: Landmark[] | null) => {
+    lastLandmarksRef.current = lms;
+  }, []);
+
+  useEffect(() => {
+    const id = setInterval(async () => {
+      const lms = lastLandmarksRef.current;
+      const now = performance.now();
+      if (!lms || inflightRef.current || now - lastClassifyRef.current < 250) return;
+      
+      lastClassifyRef.current = now;
+      inflightRef.current = true;
+      try {
+        const { letter, confidence: conf } = await classify(lms);
+        const upper = letter.toUpperCase();
+        setDetectedLetter(upper);
+        setConfidence(conf);
+        
+        const target = mode === "learn" ? activeLetter : testTarget;
+        const correct = upper === target && conf > 0.65;
+        setIsCorrect(correct);
+
+        if (mode === "test" && correct) {
+          // Auto-advance in test mode after a short delay
+          setTimeout(() => {
+            setScore(s => s + 1);
+            nextTestItem();
+          }, 1000);
+        }
+        setStatus("Tracking");
+      } catch (e) {
+        setStatus("Classifier unavailable");
+      } finally {
+        inflightRef.current = false;
+      }
+    }, 100);
+    return () => clearInterval(id);
+  }, [mode, activeLetter, testTarget, nextTestItem]);
 
   return (
     <div className="app">
       <div className="header">
-        <h1>Learning ASL</h1>
-        <span className="tag">Master the alphabet</span>
+        <h1>{mode === "learn" ? "Learning ASL" : "ASL Skill Test"}</h1>
+        <div className="row">
+           <button onClick={() => setMode("learn")} className={mode === "learn" ? "" : "secondary"}>Study Guide</button>
+           <button onClick={startTest} className={mode === "test" ? "" : "secondary"}>Test Me!</button>
+        </div>
       </div>
 
       <div className="grid">
-        <div className="panel" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignContent: 'flex-start' }}>
-          {LETTERS.map(letter => (
-            <button
-              key={letter}
-              onClick={() => setActiveLetter(letter)}
-              className={letter === activeLetter ? "" : "secondary"}
-              style={{ width: '48px', height: '48px', fontSize: '20px' }}
-            >
-              {letter}
-            </button>
-          ))}
+        <div className="panel">
+          <h2>Practice Area</h2>
+          <Webcam onLandmarks={handleLandmarks} />
+          
+          <div style={{ marginTop: '16px', textAlign: 'center' }}>
+            <div style={{ 
+              padding: '12px', 
+              borderRadius: '8px', 
+              background: isCorrect ? '#065f46' : '#1e293b',
+              border: `2px solid ${isCorrect ? '#4ade80' : '#334155'}`,
+              transition: 'all 0.2s'
+            }}>
+              <div style={{ fontSize: '14px', color: 'var(--muted)', marginBottom: '4px' }}>Detected Sign:</div>
+              <div style={{ fontSize: '48px', fontWeight: 'bold' }}>{detectedLetter}</div>
+              <div style={{ fontSize: '18px', color: isCorrect ? '#4ade80' : 'var(--muted)' }}>
+                {isCorrect ? "✨ CORRECT! ✨" : `Confidence: ${(confidence * 100).toFixed(0)}%`}
+              </div>
+            </div>
+          </div>
+          <div className="status">{status}</div>
         </div>
 
         <div className="panel">
-          <h2>How to sign "{activeLetter}"</h2>
-          <div className="letter-big" style={{ fontSize: '120px', color: 'var(--accent)', margin: '40px 0' }}>
-            {activeLetter}
-          </div>
-          <div className="sentence" style={{ textAlign: 'center', marginTop: '24px' }}>
-            {DESCRIPTIONS[activeLetter]}
-          </div>
-          {["J", "Z"].includes(activeLetter) && (
-            <div className="status" style={{ textAlign: 'center', marginTop: '16px', color: 'var(--accent-2)' }}>
-              Note: This sign involves motion.
+          {mode === "learn" ? (
+            <>
+              <h2>Select a letter to learn</h2>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '20px' }}>
+                {LETTERS.map(l => (
+                  <button 
+                    key={l} 
+                    onClick={() => setActiveLetter(l)}
+                    className={l === activeLetter ? "" : "secondary"}
+                    style={{ width: '40px', height: '40px', padding: 0 }}
+                  >
+                    {l}
+                  </button>
+                ))}
+              </div>
+              
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '120px', color: 'var(--accent)', margin: '20px 0' }}>{activeLetter}</div>
+                <h2>Instructions</h2>
+                <div className="sentence">{DESCRIPTIONS[activeLetter]}</div>
+              </div>
+            </>
+          ) : (
+            <div style={{ textAlign: 'center', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+              <h2>Challenge: Sign this letter</h2>
+              <div style={{ fontSize: '160px', color: 'var(--accent-2)', margin: '40px 0', textShadow: '0 0 30px rgba(34,211,238,0.3)' }}>
+                {testTarget}
+              </div>
+              <div style={{ fontSize: '24px', marginBottom: '20px' }}>
+                Score: <span style={{ color: 'var(--accent-2)', fontWeight: 'bold' }}>{score}</span>
+              </div>
+              <p style={{ color: 'var(--muted)' }}>Hold the sign correctly for 1 second to score!</p>
+              <button className="secondary" onClick={() => setMode("learn")} style={{ marginTop: '20px' }}>Exit Test</button>
             </div>
           )}
         </div>
