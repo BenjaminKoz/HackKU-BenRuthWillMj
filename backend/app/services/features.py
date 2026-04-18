@@ -17,8 +17,11 @@ coords. We then:
        - 3-component palm normal vector. Distinguishes letters that share finger
          shape but differ in orientation: G (palm sideways) vs Q (palm down), and
          P (palm down) vs K (palm forward).
+       - 4 thumb-tip-to-finger-MCP distances. Explicitly encodes thumb position,
+         the key discriminator in the fist family (A/E/M/N/S/T) where the whole
+         hand looks similar but the thumb sits against different knuckles.
 
-Final feature length: 63 + 10 + 5 + 5 + 3 = 86.
+Final feature length: 63 + 10 + 5 + 5 + 3 + 4 = 90.
 """
 from __future__ import annotations
 
@@ -27,14 +30,17 @@ from typing import Sequence
 
 import numpy as np
 
-FEATURE_VERSION = 3  # bump when the feature layout changes
+FEATURE_VERSION = 4  # bump when the feature layout changes
 
 TIPS = [4, 8, 12, 16, 20]          # thumb, index, middle, ring, pinky fingertips
 PIPS = [3, 6, 10, 14, 18]          # PIP joints (knuckle closest to the tip)
 WRIST = 0
 MIDDLE_MCP = 9
 INDEX_MCP = 5
+RING_MCP = 13
 PINKY_MCP = 17
+THUMB_TIP = 4
+FINGER_MCPS = [INDEX_MCP, MIDDLE_MCP, RING_MCP, PINKY_MCP]
 
 TIP_PAIRS = list(combinations(TIPS, 2))  # 10 pairs
 
@@ -60,7 +66,7 @@ def mirror_landmarks(points: Sequence[Sequence[float]] | np.ndarray) -> np.ndarr
 
 
 def build_features(points: Sequence[Sequence[float]] | np.ndarray) -> np.ndarray:
-    """Return a 1-D feature vector of length 86."""
+    """Return a 1-D feature vector of length 90."""
     arr = np.asarray(points, dtype=np.float32).reshape(21, 3)
     pts = _normalize(arr)
 
@@ -87,6 +93,11 @@ def build_features(points: Sequence[Sequence[float]] | np.ndarray) -> np.ndarray
     n_mag = float(np.linalg.norm(n)) or 1.0
     palm_normal = (n / n_mag).astype(np.float32)  # 3
 
+    thumb_to_mcp = np.array(
+        [np.linalg.norm(pts[THUMB_TIP] - pts[mcp]) for mcp in FINGER_MCPS],
+        dtype=np.float32,
+    )  # 4
+
     return np.concatenate(
-        [flat, tip_pair_dists, tip_to_wrist, pip_to_tip, palm_normal]
+        [flat, tip_pair_dists, tip_to_wrist, pip_to_tip, palm_normal, thumb_to_mcp]
     )
