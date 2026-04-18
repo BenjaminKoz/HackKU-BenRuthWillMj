@@ -186,15 +186,9 @@ export function Game() {
 
       <div className="grid">
         <div className="panel">
-          <h2>Your Camera</h2>
-          <Webcam onLandmarks={handleLandmarks} />
-          <div className="letter-big">{currentLetter}</div>
-          <div className="confidence">confidence {(confidence * 100).toFixed(0)}%</div>
-          <div className="status">{status}</div>
-
           {gameHint && !confirmLetter && !gameOver && !won && (
             <div style={{
-              marginTop: '20px',
+              marginBottom: '20px',
               padding: '20px',
               backgroundColor: 'rgba(124, 92, 255, 0.1)',
               border: '2px solid var(--accent)',
@@ -229,7 +223,7 @@ export function Game() {
 
           {confirmLetter && !gameOver && !won && (
             <div style={{
-              marginTop: '20px',
+              marginBottom: '20px',
               padding: '20px',
               backgroundColor: 'rgba(34, 211, 238, 0.1)',
               border: '2px solid var(--accent-2)',
@@ -264,7 +258,7 @@ export function Game() {
 
           {suggestion && !confirmLetter && !gameHint && !gameOver && !won && (
             <div style={{
-              marginTop: '20px',
+              marginBottom: '20px',
               padding: '15px',
               backgroundColor: 'rgba(59, 130, 246, 0.1)',
               border: '2px dashed #3b82f6',
@@ -281,6 +275,12 @@ export function Game() {
               </button>
             </div>
           )}
+
+          <h2>Your Camera</h2>
+          <Webcam onLandmarks={handleLandmarks} />
+          <div className="letter-big">{currentLetter}</div>
+          <div className="confidence">confidence {(confidence * 100).toFixed(0)}%</div>
+          <div className="status">{status}</div>
         </div>
 
         <div className="panel" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>

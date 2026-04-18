@@ -200,7 +200,30 @@ export function Learning() {
               </div>
               
               <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '120px', color: 'var(--accent)', margin: '20px 0' }}>{activeLetter}</div>
+                <div style={{ margin: '20px 0', position: 'relative' }}>
+                  <img 
+                    src={`https://raw.githubusercontent.com/aryanvasudev/Sign-Language-Translator-Fingerspelling-Detector/main/datasets/letter_images/${activeLetter}.png`}
+                    alt={`ASL sign for ${activeLetter}`}
+                    style={{ 
+                      width: '240px', 
+                      height: '240px', 
+                      objectFit: 'contain',
+                      borderRadius: '12px',
+                      backgroundColor: 'white',
+                      padding: '10px',
+                      boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
+                    }}
+                    onError={(e) => {
+                      // Fallback if image fails to load
+                      e.currentTarget.style.display = 'none';
+                      const fallback = e.currentTarget.parentElement?.querySelector('.fallback-text') as HTMLElement;
+                      if (fallback) fallback.style.display = 'block';
+                    }}
+                  />
+                  <div className="fallback-text" style={{ display: 'none', fontSize: '120px', color: 'var(--accent)' }}>
+                    {activeLetter}
+                  </div>
+                </div>
                 <h2>Instructions</h2>
                 <div className="sentence">{DESCRIPTIONS[activeLetter]}</div>
               </div>
