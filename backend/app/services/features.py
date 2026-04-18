@@ -26,11 +26,20 @@ Final feature length: 63 + 10 + 5 + 5 + 3 + 4 = 90.
 from __future__ import annotations
 
 from itertools import combinations
-from typing import Sequence
+from typing import List, Sequence
 
 import numpy as np
 
-FEATURE_VERSION = 4  # bump when the feature layout changes
+FEATURE_VERSION = 4  # bump when the feature layout changes (static + motion)
+WORD_FEATURE_VERSION = 1  # word-clip features only — independent of FEATURE_VERSION
+                          # so changes to two-hand encoding don't invalidate the
+                          # static letter / J-Z motion models.
+
+# Each frame in word mode is encoded as TWO hand slots, sorted by wrist x
+# (leftmost first). A missing hand is encoded as zeros — the model learns
+# "slot 1 zero" as the marker for one-handed signs.
+HANDS_PER_FRAME = 2
+SHAPE_FEATURE_LEN = 90  # length of build_features() output, used by callers
 
 TIPS = [4, 8, 12, 16, 20]          # thumb, index, middle, ring, pinky fingertips
 PIPS = [3, 6, 10, 14, 18]          # PIP joints (knuckle closest to the tip)
@@ -63,6 +72,44 @@ def mirror_landmarks(points: Sequence[Sequence[float]] | np.ndarray) -> np.ndarr
     arr = np.asarray(points, dtype=np.float32).reshape(21, 3).copy()
     arr[:, 0] = 1.0 - arr[:, 0]
     return arr
+
+
+def sort_hands_by_x(hands: Sequence[np.ndarray]) -> List[np.ndarray]:
+    """Sort detected hands left-to-right by wrist x. Stable slot order is the
+    only invariant that lets training and inference produce comparable feature
+    vectors, since MediaPipe's "Left/Right" handedness label is unreliable on
+    a mirrored webcam view."""
+    return sorted(hands, key=lambda h: float(h[WRIST, 0]))
+
+
+def pad_hands_to_two(hands: Sequence[np.ndarray]) -> List[np.ndarray]:
+    """Return exactly 2 hand arrays, padding missing slots with all-zero
+    21x3 arrays. Caller must have already sorted hands into canonical order."""
+    out: List[np.ndarray] = list(hands[:2])
+    while len(out) < HANDS_PER_FRAME:
+        out.append(np.zeros((21, 3), dtype=np.float32))
+    return out
+
+
+def _is_zero_hand(hand: np.ndarray) -> bool:
+    return bool(np.all(hand == 0))
+
+
+def build_two_hand_shape_features(hands: Sequence[np.ndarray]) -> np.ndarray:
+    """Per-frame two-hand shape vector of length 2 * SHAPE_FEATURE_LEN.
+
+    `hands` must be exactly 2 hand arrays in canonical order (use
+    `pad_hands_to_two` after sorting). A zero-padded slot becomes a zero
+    feature block, so the model can use slot-emptiness as a signal for
+    "one-handed sign in the other slot."
+    """
+    parts: List[np.ndarray] = []
+    for h in hands:
+        if _is_zero_hand(h):
+            parts.append(np.zeros(SHAPE_FEATURE_LEN, dtype=np.float32))
+        else:
+            parts.append(build_features(h).astype(np.float32))
+    return np.concatenate(parts)
 
 
 def build_features(points: Sequence[Sequence[float]] | np.ndarray) -> np.ndarray:

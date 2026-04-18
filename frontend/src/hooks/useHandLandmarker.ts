@@ -7,15 +7,28 @@ import {
 
 export type Landmark = { x: number; y: number; z: number };
 
+export type HandLandmarkerCallbacks = {
+  // Single-hand callback for existing consumers (letter mode, Learning, Game).
+  // Receives the leftmost detected hand, or null if none.
+  onLandmarks?: (lms: Landmark[] | null) => void;
+  // Multi-hand callback: receives all detected hands (0, 1, or 2), sorted
+  // leftmost-wrist-x first. Used by word mode.
+  onHands?: (hands: Landmark[][]) => void;
+};
+
 export function useHandLandmarker(
   videoRef: React.RefObject<HTMLVideoElement>,
-  onLandmarks: (lms: Landmark[] | null) => void
+  callbacks: HandLandmarkerCallbacks,
 ) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const landmarkerRef = useRef<HandLandmarker | null>(null);
   const rafRef = useRef<number | null>(null);
   const lastTimeRef = useRef(0);
+  // Stash the latest callbacks in a ref so the detection loop doesn't rebind
+  // every time the parent re-renders.
+  const callbacksRef = useRef(callbacks);
+  callbacksRef.current = callbacks;
 
   useEffect(() => {
     let cancelled = false;
@@ -32,7 +45,7 @@ export function useHandLandmarker(
             delegate: "GPU",
           },
           runningMode: "VIDEO",
-          numHands: 1,
+          numHands: 2,
         });
         if (cancelled) {
           lm.close();
@@ -71,18 +84,25 @@ export function useHandLandmarker(
       }
       lastTimeRef.current = now;
       const res: HandLandmarkerResult = lm.detectForVideo(video, now);
-      if (res.landmarks && res.landmarks.length > 0) {
-        onLandmarks(res.landmarks[0] as Landmark[]);
-      } else {
-        onLandmarks(null);
-      }
+
+      const rawHands = (res.landmarks ?? []) as Landmark[][];
+      // Canonical order: leftmost wrist (landmark 0) first. Matches the
+      // sort_hands_by_x invariant the word model is trained against.
+      const sorted = rawHands
+        .slice()
+        .sort((a, b) => a[0].x - b[0].x);
+
+      const { onLandmarks, onHands } = callbacksRef.current;
+      onHands?.(sorted);
+      onLandmarks?.(sorted.length > 0 ? sorted[0] : null);
+
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
     return () => {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
     };
-  }, [ready, videoRef, onLandmarks]);
+  }, [ready, videoRef]);
 
   return { ready, error };
 }

@@ -5,7 +5,15 @@ from typing import Deque, List, Sequence, Tuple
 import numpy as np
 import joblib
 
-from app.services.features import FEATURE_VERSION, build_features
+from app.services.features import (
+    FEATURE_VERSION,
+    HANDS_PER_FRAME,
+    WORD_FEATURE_VERSION,
+    build_features,
+    build_two_hand_shape_features,
+    pad_hands_to_two,
+    sort_hands_by_x,
+)
 
 MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
 STATIC_MODEL_PATH = MODELS_DIR / "asl_classifier.joblib"
@@ -80,16 +88,24 @@ def _load_words():
     global _words_bundle
     if _words_bundle is None and WORDS_MODEL_PATH.exists():
         bundle = joblib.load(WORDS_MODEL_PATH)
-        if bundle.get("feature_version") != FEATURE_VERSION:
+        saved_ver = bundle.get("word_feature_version")
+        if saved_ver != WORD_FEATURE_VERSION:
             print(
-                f"warn: word model feature_version {bundle.get('feature_version')} "
-                f"!= expected {FEATURE_VERSION}; ignoring word model"
+                f"warn: word model word_feature_version {saved_ver} "
+                f"!= expected {WORD_FEATURE_VERSION}; ignoring word model. "
+                "Retrain with `python training/train_words.py`."
             )
             return None
         if bundle.get("clip_frames") != WORD_CLIP_FRAMES:
             print(
                 f"warn: word model clip_frames {bundle.get('clip_frames')} "
                 f"!= server clip_frames {WORD_CLIP_FRAMES}; ignoring word model"
+            )
+            return None
+        if bundle.get("hands_per_frame") != HANDS_PER_FRAME:
+            print(
+                f"warn: word model hands_per_frame {bundle.get('hands_per_frame')} "
+                f"!= expected {HANDS_PER_FRAME}; ignoring word model"
             )
             return None
         _words_bundle = bundle
@@ -108,10 +124,14 @@ def _mean_landmark_displacement(frames: List[np.ndarray]) -> float:
     return total / (len(frames) - 1)
 
 
-def _clip_features(buffer: List[np.ndarray], bundle: dict, clip_frames: int) -> np.ndarray:
-    """Rebuild the same flat feature vector that train_motion/train_words emits."""
+def _motion_clip_features(buffer: List[np.ndarray], bundle: dict) -> np.ndarray:
+    """Rebuild the flat feature vector that train_motion.py emits.
+
+    Single-hand motion (J/Z): per-keyframe shape features + wrist (dx, dy)
+    relative to the first keyframe.
+    """
     n_keyframes = bundle["n_keyframes"]
-    idxs = np.linspace(0, clip_frames - 1, n_keyframes).round().astype(int)
+    idxs = np.linspace(0, CLIP_FRAMES - 1, n_keyframes).round().astype(int)
     frame0_wrist_xy = buffer[idxs[0]][0, :2]
 
     parts: List[np.ndarray] = []
@@ -122,6 +142,41 @@ def _clip_features(buffer: List[np.ndarray], bundle: dict, clip_frames: int) -> 
         wrist_dy = frame[0, 1] - frame0_wrist_xy[1]
         parts.append(np.concatenate([shape, [wrist_dx, wrist_dy]]).astype(np.float32))
     return np.concatenate(parts).reshape(1, -1)
+
+
+def _word_clip_features(
+    hands_per_frame: List[List[np.ndarray]],
+    bundle: dict,
+) -> np.ndarray:
+    """Rebuild the flat feature vector that train_words.py emits.
+
+    `hands_per_frame[i]` is a list of 0-2 real hand arrays (21,3) detected in
+    frame i. We sort leftmost-wrist first and pad missing slots with zeros.
+    """
+    n_keyframes = bundle["n_keyframes"]
+    idxs = np.linspace(0, WORD_CLIP_FRAMES - 1, n_keyframes).round().astype(int)
+
+    def canonical_at(i: int) -> List[np.ndarray]:
+        sorted_real = sort_hands_by_x(hands_per_frame[i])
+        return pad_hands_to_two(sorted_real)
+
+    first_hands = canonical_at(int(idxs[0]))
+    slot_ref_xy = [h[0, :2].copy() for h in first_hands]
+    slot_present_at_start = [not bool(np.all(h == 0)) for h in first_hands]
+
+    parts: List[np.ndarray] = []
+    for i in idxs:
+        hands = canonical_at(int(i))
+        shape = build_two_hand_shape_features(hands)
+        traj: List[float] = []
+        for slot, h in enumerate(hands):
+            if np.all(h == 0) or not slot_present_at_start[slot]:
+                traj.extend([0.0, 0.0])
+            else:
+                traj.append(float(h[0, 0] - slot_ref_xy[slot][0]))
+                traj.append(float(h[0, 1] - slot_ref_xy[slot][1]))
+        parts.append(np.concatenate([shape, np.asarray(traj, dtype=np.float32)]))
+    return np.concatenate(parts).reshape(1, -1).astype(np.float32)
 
 
 def _classify_static(points_array: np.ndarray) -> Tuple[str, float]:
@@ -141,7 +196,7 @@ def _classify_motion() -> Tuple[str, float]:
     bundle = _motion_bundle
     model = bundle["model"]
     labels = bundle["labels"]
-    features = _clip_features(list(_landmark_buffer), bundle, CLIP_FRAMES)
+    features = _motion_clip_features(list(_landmark_buffer), bundle)
     probs = model.predict_proba(features)[0]
     idx = int(np.argmax(probs))
     return labels[idx], float(probs[idx])
@@ -189,20 +244,19 @@ def classify_landmarks(
 
 
 def classify_word_clip(
-    frames: Sequence[Sequence[Tuple[float, float, float]]],
+    frames: Sequence[Sequence[Sequence[Tuple[float, float, float]]]],
 ) -> Tuple[str, float]:
     """Classify a deliberate, caller-supplied word clip.
 
-    `frames` must have WORD_CLIP_FRAMES entries, each a 21-landmark list of
-    (x, y, z). This is the "push-to-record" inference path: the UI starts a
-    3-second capture on user action and sends the full clip in one request.
-    No gating, no timing heuristics — this is exactly how training samples
-    were recorded, so features are drop-in comparable.
+    `frames` must have WORD_CLIP_FRAMES entries. Each entry is a list of 0, 1,
+    or 2 detected hands; each hand is 21 (x, y, z) landmarks. Hands are sorted
+    leftmost-wrist first and missing slots are zero-padded to feed a fixed-size
+    feature vector. This mirrors how train_words.py encodes each frame.
     """
     bundle = _load_words()
     if bundle is None:
         raise FileNotFoundError(
-            f"Word model not found at {WORDS_MODEL_PATH}. "
+            f"Word model not found or incompatible at {WORDS_MODEL_PATH}. "
             "Run `python training/train_words.py` first."
         )
     if len(frames) != WORD_CLIP_FRAMES:
@@ -210,9 +264,19 @@ def classify_word_clip(
             f"Expected {WORD_CLIP_FRAMES} frames, got {len(frames)}."
         )
 
-    clip = np.asarray(frames, dtype=np.float32).reshape(WORD_CLIP_FRAMES, 21, 3)
-    buf = [clip[i] for i in range(WORD_CLIP_FRAMES)]
-    features = _clip_features(buf, bundle, WORD_CLIP_FRAMES)
+    hands_per_frame: List[List[np.ndarray]] = []
+    for i, frame in enumerate(frames):
+        if len(frame) > HANDS_PER_FRAME:
+            raise ValueError(
+                f"Frame {i}: got {len(frame)} hands, max is {HANDS_PER_FRAME}."
+            )
+        frame_hands: List[np.ndarray] = []
+        for hand in frame:
+            arr = np.asarray(hand, dtype=np.float32).reshape(21, 3)
+            frame_hands.append(arr)
+        hands_per_frame.append(frame_hands)
+
+    features = _word_clip_features(hands_per_frame, bundle)
 
     model = bundle["model"]
     labels = bundle["labels"]
