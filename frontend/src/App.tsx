@@ -3,9 +3,9 @@ import { Webcam } from "./components/Webcam";
 import type { Landmark } from "./hooks/useHandLandmarker";
 import { classify, compose, speak } from "./lib/api";
 
-const CLASSIFY_INTERVAL_MS = 250;
-const STABLE_FRAMES_TO_COMMIT = 4;
-const MIN_CONFIDENCE = 0.6;
+const CLASSIFY_INTERVAL_MS = 200;
+const STABLE_FRAMES_TO_COMMIT = 6;
+const MIN_CONFIDENCE = 0.7;
 
 export default function App() {
   const [currentLetter, setCurrentLetter] = useState<string>("-");

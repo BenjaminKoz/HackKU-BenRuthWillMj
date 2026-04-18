@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(backend/.venv/Scripts/python.exe -c \"import ast; ast.parse\\(open\\('backend/training/train.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
-      "Bash(backend/.venv/Scripts/python.exe -c \"import os; print\\('CPU count:', os.cpu_count\\(\\)\\)\")"
+      "Bash(backend/.venv/Scripts/python.exe -c \"import os; print\\('CPU count:', os.cpu_count\\(\\)\\)\")",
+      "Bash(backend/.venv/Scripts/python.exe backend/training/train.py --skip-labels nothing,space,del)"
     ]
   }
 }

@@ -1,10 +1,8 @@
 """Record ASL landmark samples from the webcam into data/landmarks.csv.
 
-Controls while running:
-    a-z  : record a sample labeled with that letter
-    SPACE: record a sample labeled with the currently-held letter
-    BACKSPACE: change held letter
-    q    : quit
+Controls while running (focus must be on the webcam window):
+    a-z : record one sample labeled with that letter
+    ESC : quit
 
 This lets the team bootstrap a classifier in minutes without downloading a dataset.
 """
@@ -42,12 +40,12 @@ def main():
                 landmarks = res.multi_hand_landmarks[0]
                 draw.draw_landmarks(frame, landmarks, mp.solutions.hands.HAND_CONNECTIONS)
 
-            cv2.putText(frame, f"Label: {held_label}  (press a-z to record)",
+            cv2.putText(frame, f"Last: {held_label}  (a-z = record, ESC = quit)",
                         (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
             cv2.imshow("ASL capture", frame)
 
             key = cv2.waitKey(1) & 0xFF
-            if key == ord("q"):
+            if key == 27:  # ESC
                 break
             if ord("a") <= key <= ord("z") and landmarks is not None:
                 held_label = chr(key).upper()

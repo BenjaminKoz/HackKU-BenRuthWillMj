@@ -20,6 +20,7 @@ import csv
 import multiprocessing as mp
 import os
 import random
+import sys
 import time
 from pathlib import Path
 from typing import Iterable, List, Tuple
@@ -30,18 +31,15 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
 
+# Ensure `app.services.features` is importable when this script is run directly.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from app.services.features import FEATURE_VERSION, build_features  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 MODEL_OUT = ROOT / "models" / "asl_classifier.joblib"
 DATA_DIR = ROOT.parent / "data"
 CSV_CAPTURE = DATA_DIR / "landmarks.csv"
 CSV_IMAGES = DATA_DIR / "landmarks_images.csv"
-
-
-def normalize(points: np.ndarray) -> np.ndarray:
-    wrist = points[0].copy()
-    pts = points - wrist
-    scale = float(np.linalg.norm(pts[9])) or 1.0
-    return (pts / scale).flatten()
 
 
 def read_csv(path: Path) -> Iterable[Tuple[str, np.ndarray]]:
@@ -53,7 +51,7 @@ def read_csv(path: Path) -> Iterable[Tuple[str, np.ndarray]]:
                 continue
             label = row[0]
             pts = np.array(row[1:], dtype=np.float32).reshape(21, 3)
-            yield label, normalize(pts)
+            yield label, build_features(pts)
 
 
 _WORKER_HANDS = None  # per-process MediaPipe Hands, initialized lazily in each worker
@@ -141,9 +139,13 @@ def extract_landmarks_from_images(
     print(f"Cached {total_written} landmark rows to {out_csv} in {elapsed:.1f}s")
 
 
-def load_features(skip_labels: set[str]) -> tuple[np.ndarray, List[str]]:
-    X, y = [], []
-    for src in (CSV_CAPTURE, CSV_IMAGES):
+def load_features(
+    skip_labels: set[str],
+) -> tuple[np.ndarray, List[str], np.ndarray]:
+    """Returns (X, y, is_user_sample) — is_user_sample[i] is True if that row came
+    from the user's capture.py CSV (should be weighted higher than Kaggle rows)."""
+    X, y, is_user = [], [], []
+    for src, from_user in ((CSV_CAPTURE, True), (CSV_IMAGES, False)):
         if not src.exists():
             continue
         count = 0
@@ -152,13 +154,15 @@ def load_features(skip_labels: set[str]) -> tuple[np.ndarray, List[str]]:
                 continue
             X.append(feats)
             y.append(label)
+            is_user.append(from_user)
             count += 1
-        print(f"Loaded {count} rows from {src.name}")
+        print(f"Loaded {count} rows from {src.name} "
+              f"({'user capture — will be weighted up' if from_user else 'Kaggle'})")
     if not X:
         raise SystemExit(
             "No training data found. Run capture.py or pass --images PATH."
         )
-    return np.array(X, dtype=np.float32), y
+    return np.array(X, dtype=np.float32), y, np.array(is_user, dtype=bool)
 
 
 def main():
@@ -170,6 +174,9 @@ def main():
     parser.add_argument("--workers", type=int, default=None,
                         help="Parallel workers for extraction (default: cpu_count - 1)")
     parser.add_argument("--trees", type=int, default=300)
+    parser.add_argument("--user-weight", type=float, default=50.0,
+                        help="How many 'Kaggle samples' one of your own captures "
+                             "counts as. 50 means 1 user sample ≈ 50 Kaggle samples.")
     parser.add_argument("--skip-labels", type=str, default="",
                         help="Comma-separated labels to exclude (e.g. nothing,space,del)")
     parser.add_argument("--rebuild-image-cache", action="store_true",
@@ -187,26 +194,37 @@ def main():
                   "(pass --rebuild-image-cache to regenerate)")
 
     skip = {s.strip() for s in args.skip_labels.split(",") if s.strip()}
-    X, y = load_features(skip)
+    X, y, is_user = load_features(skip)
 
     labels = sorted(set(y))
     label_to_idx = {lbl: i for i, lbl in enumerate(labels)}
     y_idx = np.array([label_to_idx[lbl] for lbl in y])
-    print(f"Training on {len(X)} samples across {len(labels)} classes: {labels}")
+    n_user = int(is_user.sum())
+    print(f"Training on {len(X)} samples across {len(labels)} classes "
+          f"({n_user} from you, {len(X) - n_user} from Kaggle)")
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y_idx, test_size=0.2, random_state=42, stratify=y_idx
+    sample_weight = np.where(is_user, args.user_weight, 1.0).astype(np.float32)
+    if n_user:
+        print(f"Weighting your {n_user} samples at {args.user_weight}× "
+              f"(effective training strength {n_user * args.user_weight:.0f} "
+              f"vs Kaggle {len(X) - n_user})")
+
+    X_train, X_test, y_train, y_test, w_train, _w_test = train_test_split(
+        X, y_idx, sample_weight, test_size=0.2, random_state=42, stratify=y_idx
     )
 
     clf = RandomForestClassifier(n_estimators=args.trees, n_jobs=-1, random_state=42)
-    clf.fit(X_train, y_train)
+    clf.fit(X_train, y_train, sample_weight=w_train)
 
     y_pred = clf.predict(X_test)
     print(classification_report(y_test, y_pred, target_names=labels))
 
     MODEL_OUT.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump({"model": clf, "labels": labels}, MODEL_OUT)
-    print(f"Saved model to {MODEL_OUT}")
+    joblib.dump(
+        {"model": clf, "labels": labels, "feature_version": FEATURE_VERSION},
+        MODEL_OUT,
+    )
+    print(f"Saved model to {MODEL_OUT} (feature_version={FEATURE_VERSION})")
 
 
 if __name__ == "__main__":
