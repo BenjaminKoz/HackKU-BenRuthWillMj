@@ -9,6 +9,10 @@ const LETTERS = [
   "U", "V", "W", "X", "Y", "Z"
 ];
 
+const MIN_CONFIDENCE = 0.60;
+const SUGGESTION_THRESHOLD = 0.40;
+const STABLE_FRAMES_TO_SUGGEST = 8;
+
 const DESCRIPTIONS: Record<string, string> = {
   A: "Make a fist and place your thumb against the side of your index finger.",
   B: "Hold your hand up with your fingers straight and together. Fold your thumb across your palm.",
@@ -49,6 +53,7 @@ export function Learning() {
   const [confidence, setConfidence] = useState(0);
   const [isCorrect, setIsCorrect] = useState(false);
   const [status, setStatus] = useState("Waiting for hand…");
+  const [suggestion, setSuggestion] = useState<string | null>(null);
   const [showTestSuccess, setShowTestSuccess] = useState(false);
   const [testStartTime, setTestStartTime] = useState(0);
   const [showHint, setShowHint] = useState(false);
@@ -58,6 +63,7 @@ export function Learning() {
   const lastClassifyRef = useRef(0);
   const inflightRef = useRef(false);
   const scoreUpdateRef = useRef(false);
+  const stableSuggestionRef = useRef<{ letter: string; count: number }>({ letter: "", count: 0 });
 
   const startTest = useCallback(() => {
     setMode("test");
@@ -84,6 +90,25 @@ export function Learning() {
   const handleLandmarks = useCallback((lms: Landmark[] | null) => {
     lastLandmarksRef.current = lms;
   }, []);
+
+  const handleSuggestionClick = useCallback(() => {
+    if (!suggestion) return;
+    if (mode === "learn") {
+      setActiveLetter(suggestion);
+      scoreUpdateRef.current = false;
+    } else {
+      if (suggestion === testTarget && !scoreUpdateRef.current) {
+        scoreUpdateRef.current = true;
+        setShowTestSuccess(true);
+        setTimeout(() => {
+          setScore(s => s + 1);
+          nextTestItem();
+        }, 1000);
+      }
+    }
+    setSuggestion(null);
+    stableSuggestionRef.current = { letter: "", count: 0 };
+  }, [suggestion, mode, testTarget, nextTestItem]);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -112,7 +137,7 @@ export function Learning() {
         setConfidence(conf);
         
         const target = mode === "learn" ? activeLetter : testTarget;
-        const correct = upper === target && conf > 0.65;
+        const correct = upper === target && conf >= MIN_CONFIDENCE;
         setIsCorrect(correct);
 
         if (correct && !scoreUpdateRef.current) {
@@ -136,6 +161,24 @@ export function Learning() {
             }, 1500);
           }
         }
+
+        // Suggestion Logic
+        if (!correct && conf >= SUGGESTION_THRESHOLD && upper !== "NOTHING") {
+          const prevS = stableSuggestionRef.current;
+          if (prevS.letter === upper) {
+            prevS.count += 1;
+          } else {
+            stableSuggestionRef.current = { letter: upper, count: 1 };
+          }
+
+          if (stableSuggestionRef.current.count >= STABLE_FRAMES_TO_SUGGEST) {
+            setSuggestion(upper);
+          }
+        } else {
+          setSuggestion(null);
+          stableSuggestionRef.current = { letter: "", count: 0 };
+        }
+
         setStatus("Tracking");
       } catch (e) {
         setStatus("Classifier unavailable");
@@ -158,6 +201,25 @@ export function Learning() {
 
       <div className="grid">
         <div className="panel">
+          {suggestion && (
+            <div style={{
+              marginBottom: '12px',
+              padding: '10px',
+              backgroundColor: 'rgba(59, 130, 246, 0.1)',
+              border: '2px dashed #3b82f6',
+              borderRadius: '12px',
+              textAlign: 'center',
+              animation: 'pulse 2s infinite'
+            }}>
+              <span style={{ fontSize: '14px' }}>Could it be <strong>{suggestion}</strong>?</span>
+              <button 
+                onClick={handleSuggestionClick}
+                style={{ marginLeft: '10px', padding: '4px 12px', fontSize: '12px' }}
+              >
+                {mode === "learn" ? `Switch to ${suggestion}` : `Guess ${suggestion}`}
+              </button>
+            </div>
+          )}
           <h2>Practice Area</h2>
           <Webcam onLandmarks={handleLandmarks} />
           
