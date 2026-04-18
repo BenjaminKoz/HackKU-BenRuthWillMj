@@ -2,7 +2,12 @@ import { useEffect, useRef } from "react";
 import { useHandLandmarker, type Landmark } from "../hooks/useHandLandmarker";
 
 type Props = {
-  onLandmarks: (lms: Landmark[] | null) => void;
+  // Single-hand callback (primary / leftmost hand, or null). Back-compat for
+  // letters mode, Learning, and Game.
+  onLandmarks?: (lms: Landmark[] | null) => void;
+  // Multi-hand callback: up to 2 hands in leftmost-wrist-first order. Used by
+  // words mode so both hands can go into the clip.
+  onHands?: (hands: Landmark[][]) => void;
 };
 
 const HAND_EDGES: [number, number][] = [
@@ -14,18 +19,30 @@ const HAND_EDGES: [number, number][] = [
   [0, 17],
 ];
 
-export function Webcam({ onLandmarks }: Props) {
+const HAND_COLORS = [
+  { stroke: "#22d3ee", joint: "#7c5cff" }, // slot 0 (leftmost)
+  { stroke: "#f97316", joint: "#fbbf24" }, // slot 1 (rightmost)
+];
+
+export function Webcam({ onLandmarks, onHands }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const lastLmsRef = useRef<Landmark[] | null>(null);
+  const handsRef = useRef<Landmark[][]>([]);
 
-  const handleLms = (lms: Landmark[] | null) => {
-    lastLmsRef.current = lms;
-    onLandmarks(lms);
+  const handleHands = (hands: Landmark[][]) => {
+    handsRef.current = hands;
+    onHands?.(hands);
     drawOverlay();
   };
 
-  const { ready, error } = useHandLandmarker(videoRef, handleLms);
+  const handleLandmarks = (lms: Landmark[] | null) => {
+    onLandmarks?.(lms);
+  };
+
+  const { ready, error } = useHandLandmarker(videoRef, {
+    onHands: handleHands,
+    onLandmarks: handleLandmarks,
+  });
 
   useEffect(() => {
     let stream: MediaStream | null = null;
@@ -63,23 +80,26 @@ export function Webcam({ onLandmarks }: Props) {
     const ctx = c.getContext("2d");
     if (!ctx) return;
     ctx.clearRect(0, 0, c.width, c.height);
-    const lms = lastLmsRef.current;
-    if (!lms) return;
+    const hands = handsRef.current;
+    if (hands.length === 0) return;
 
-    ctx.strokeStyle = "#22d3ee";
-    ctx.lineWidth = 3;
-    for (const [a, b] of HAND_EDGES) {
-      ctx.beginPath();
-      ctx.moveTo(lms[a].x * c.width, lms[a].y * c.height);
-      ctx.lineTo(lms[b].x * c.width, lms[b].y * c.height);
-      ctx.stroke();
-    }
-    ctx.fillStyle = "#7c5cff";
-    for (const lm of lms) {
-      ctx.beginPath();
-      ctx.arc(lm.x * c.width, lm.y * c.height, 4, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    hands.forEach((lms, i) => {
+      const color = HAND_COLORS[i] ?? HAND_COLORS[0];
+      ctx.strokeStyle = color.stroke;
+      ctx.lineWidth = 3;
+      for (const [a, b] of HAND_EDGES) {
+        ctx.beginPath();
+        ctx.moveTo(lms[a].x * c.width, lms[a].y * c.height);
+        ctx.lineTo(lms[b].x * c.width, lms[b].y * c.height);
+        ctx.stroke();
+      }
+      ctx.fillStyle = color.joint;
+      for (const lm of lms) {
+        ctx.beginPath();
+        ctx.arc(lm.x * c.width, lm.y * c.height, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    });
   };
 
   return (

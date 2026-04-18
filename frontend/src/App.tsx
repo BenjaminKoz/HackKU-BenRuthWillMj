@@ -38,6 +38,13 @@ export default function App() {
   const [recordProgress, setRecordProgress] = useState(0);
   const [lastWord, setLastWord] = useState<string | null>(null);
   const [lastWordConf, setLastWordConf] = useState(0);
+  const [liveHandCount, setLiveHandCount] = useState(0);
+  // Breakdown of how many frames in the current/last clip had 0, 1, or 2 hands.
+  const [clipHandStats, setClipHandStats] = useState<{ h0: number; h1: number; h2: number }>({
+    h0: 0,
+    h1: 0,
+    h2: 0,
+  });
 
   const modeRef = useRef<ClassifyMode>("letters");
   const lastLandmarksRef = useRef<Landmark[] | null>(null);
@@ -45,7 +52,10 @@ export default function App() {
   const stableLetterRef = useRef<{ letter: string; count: number }>({ letter: "", count: 0 });
   const inflightRef = useRef(false);
 
-  const recordedFramesRef = useRef<Landmark[][]>([]);
+  // Each entry is a frame: an array of 0-2 detected hands, leftmost-wrist-x
+  // first. The word API expects this shape; the backend pads missing slots.
+  const recordedFramesRef = useRef<Landmark[][][]>([]);
+  const lastHandsRef = useRef<Landmark[][]>([]);
   const recordWatchdogRef = useRef<number | null>(null);
   const resultPinTimeoutRef = useRef<number | null>(null);
   const wordStateRef = useRef<WordState>("idle");
@@ -60,18 +70,24 @@ export default function App() {
   }, [wordState]);
 
   const handleLandmarks = useCallback((lms: Landmark[] | null) => {
+    // Used by letters-mode continuous classification — just the primary hand.
     lastLandmarksRef.current = lms;
+  }, []);
+
+  const handleHands = useCallback((hands: Landmark[][]) => {
+    lastHandsRef.current = hands;
+    setLiveHandCount(hands.length);
     // When recording, append every landmarker callback directly — that way the
     // clip's frame rate exactly matches the webcam rate the training data was
     // recorded at, without setInterval phase drift causing duplicates.
     if (wordStateRef.current !== "recording") return;
     const frames = recordedFramesRef.current;
     if (frames.length >= WORD_CLIP_FRAMES) return;
-    if (lms) {
-      frames.push(lms);
+    if (hands.length > 0) {
+      frames.push(hands);
     } else if (frames.length > 0) {
-      // Hand briefly lost — duplicate the last frame to keep timing intact
-      // (matches capture.py:73-77).
+      // Hands briefly lost — duplicate the last frame to keep timing intact
+      // (matches capture.py's lost-hand behaviour).
       frames.push(frames[frames.length - 1]);
     } else {
       // No hand yet and no frames to duplicate; just wait for the next tick.
@@ -79,6 +95,13 @@ export default function App() {
     }
     setRecordProgress(frames.length);
     if (frames.length >= WORD_CLIP_FRAMES) {
+      const stats = { h0: 0, h1: 0, h2: 0 };
+      for (const f of frames) {
+        if (f.length === 2) stats.h2 += 1;
+        else if (f.length === 1) stats.h1 += 1;
+        else stats.h0 += 1;
+      }
+      setClipHandStats(stats);
       finishRecordingRef.current();
     }
   }, []);
@@ -167,10 +190,6 @@ export default function App() {
   const startRecording = useCallback(() => {
     if (modeRef.current !== "words") return;
     if (wordStateRef.current !== "idle") return;
-    if (!lastLandmarksRef.current) {
-      setStatus("No hand detected — show your hand before recording.");
-      return;
-    }
     clearWordTimers();
     recordedFramesRef.current = [];
     setLastWord(null);
@@ -178,12 +197,13 @@ export default function App() {
     setRecordProgress(0);
     wordStateRef.current = "recording";
     setWordState("recording");
-    setStatus("Recording… sign now");
+    setStatus("Recording… get your hand in frame and sign");
 
-    // Safety net: if for some reason the landmarker stalls (e.g. hand leaves
-    // before any frame was captured), give up after a generous timeout so the
-    // UI doesn't get stuck in "recording" forever.
-    const maxMs = WORD_CAPTURE_INTERVAL_MS * WORD_CLIP_FRAMES * 2;
+    // Safety net: if the landmarker never sees a hand, give up after a
+    // generous timeout so the UI doesn't get stuck in "recording" forever.
+    // Recording only collects frames once hands appear, so allow extra time
+    // for the user to get into frame after pressing Space.
+    const maxMs = WORD_CAPTURE_INTERVAL_MS * WORD_CLIP_FRAMES + 10_000;
     recordWatchdogRef.current = window.setTimeout(() => {
       if (wordStateRef.current === "recording") {
         setStatus(
@@ -328,7 +348,7 @@ export default function App() {
       <div className="grid">
         <div className="panel">
           <h2>Camera</h2>
-          <Webcam onLandmarks={handleLandmarks} />
+          <Webcam onLandmarks={handleLandmarks} onHands={handleHands} />
 
           {mode === "letters" ? (
             <>
@@ -355,6 +375,18 @@ export default function App() {
                   confidence {(lastWordConf * 100).toFixed(0)}%
                 </div>
               )}
+              <div
+                style={{
+                  fontSize: 13,
+                  color: "#8892a6",
+                  marginTop: 6,
+                  textAlign: "center",
+                }}
+              >
+                {wordState === "result"
+                  ? `clip hands: ${clipHandStats.h2}× 2-hand · ${clipHandStats.h1}× 1-hand · ${clipHandStats.h0}× 0-hand`
+                  : `hands detected now: ${liveHandCount}`}
+              </div>
               <div
                 style={{
                   height: 10,

@@ -20,7 +20,7 @@ export async function resetClassify(): Promise<void> {
 }
 
 export async function classifyWordClip(
-  frames: Landmark[][],
+  frames: Landmark[][][],
 ): Promise<{ letter: string; confidence: number }> {
   const res = await fetch("/api/classify-word-clip", {
     method: "POST",

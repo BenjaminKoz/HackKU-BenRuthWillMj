@@ -1,8 +1,10 @@
 """Record ASL landmark samples from the webcam.
 
-Static single-frame samples -> data/landmarks.csv
-Motion sequences (J, Z)     -> data/landmarks_motion.csv
-Word sequences              -> data/landmarks_words.csv
+Static single-frame samples -> data/landmarks.csv          (one hand)
+Motion sequences (J, Z)     -> data/landmarks_motion.csv   (one hand)
+Word sequences              -> data/landmarks_words.csv    (TWO hands per frame:
+                                                            leftmost-wrist first,
+                                                            missing slot zero-padded)
 
 Controls while running (focus must be on the webcam window):
     a-z              record one static sample labeled with that letter
@@ -50,6 +52,28 @@ def flatten_landmarks(lms) -> list[float]:
     return out
 
 
+def hand_to_array(lms) -> list[list[float]]:
+    """Return a single hand as a list of 21 [x, y, z] triples."""
+    return [[lm.x, lm.y, lm.z] for lm in lms.landmark]
+
+
+def two_hand_frame_floats(multi_hand_landmarks) -> list[float]:
+    """Encode up to 2 MediaPipe hands for a single frame into the fixed 2-slot
+    layout used by train_words.py: leftmost-wrist-x first, missing slot = zeros.
+    Returns 2 * 21 * 3 = 126 floats."""
+    hands = [hand_to_array(h) for h in (multi_hand_landmarks or [])][:2]
+    # Sort by wrist (landmark 0) x, leftmost first — same canonical order as
+    # app/services/features.py sort_hands_by_x.
+    hands.sort(key=lambda h: h[0][0])
+    while len(hands) < 2:
+        hands.append([[0.0, 0.0, 0.0] for _ in range(21)])
+    out: list[float] = []
+    for hand in hands:
+        for lm in hand:
+            out.extend(lm)
+    return out
+
+
 def main():
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
@@ -59,7 +83,9 @@ def main():
         print("and try again.")
         return
 
-    hands = mp.solutions.hands.Hands(max_num_hands=1, min_detection_confidence=0.6)
+    # max_num_hands=2 so word mode can record two-handed signs. Single-hand
+    # letter/motion capture still just takes multi_hand_landmarks[0].
+    hands = mp.solutions.hands.Hands(max_num_hands=2, min_detection_confidence=0.6)
     draw = mp.solutions.drawing_utils
 
     held_label = "A"
@@ -83,17 +109,28 @@ def main():
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             res = hands.process(rgb)
             landmarks = None
-            if res.multi_hand_landmarks:
-                landmarks = res.multi_hand_landmarks[0]
-                draw.draw_landmarks(frame, landmarks, mp.solutions.hands.HAND_CONNECTIONS)
+            multi_hands = res.multi_hand_landmarks or []
+            if multi_hands:
+                landmarks = multi_hands[0]
+                for h in multi_hands:
+                    draw.draw_landmarks(frame, h, mp.solutions.hands.HAND_CONNECTIONS)
 
             # If in the middle of a motion/word capture, grab the next frame's landmarks.
             # A lost hand mid-clip duplicates the last frame so timing stays intact.
+            # Word clips capture TWO hands per frame (sorted leftmost-first,
+            # zero-padded if only one is visible); motion clips capture one.
             if motion_recording is not None:
-                if landmarks is not None:
-                    motion_recording["frames"].append(flatten_landmarks(landmarks))
-                elif motion_recording["frames"]:
-                    motion_recording["frames"].append(motion_recording["frames"][-1])
+                kind = motion_recording["kind"]
+                if kind == "word":
+                    if multi_hands:
+                        motion_recording["frames"].append(two_hand_frame_floats(multi_hands))
+                    elif motion_recording["frames"]:
+                        motion_recording["frames"].append(motion_recording["frames"][-1])
+                else:
+                    if landmarks is not None:
+                        motion_recording["frames"].append(flatten_landmarks(landmarks))
+                    elif motion_recording["frames"]:
+                        motion_recording["frames"].append(motion_recording["frames"][-1])
                 # else: hand not yet visible; wait one more loop.
 
                 if len(motion_recording["frames"]) >= motion_recording["target"]:

@@ -29,11 +29,12 @@ class ClassifyResponse(BaseModel):
 
 
 class ClassifyWordClipRequest(BaseModel):
-    frames: List[List[Landmark]] = Field(
+    frames: List[List[List[Landmark]]] = Field(
         ...,
         description=(
-            "Exactly WORD_CLIP_FRAMES frames, each with 21 landmarks. "
-            "Should be captured at ~30Hz to match training data."
+            "Exactly WORD_CLIP_FRAMES frames. Each frame is a list of 0, 1, "
+            "or 2 detected hands (each with 21 landmarks). Should be captured "
+            "at ~30Hz to match training data."
         ),
     )
 
@@ -56,12 +57,21 @@ def classify_word_clip_route(req: ClassifyWordClipRequest) -> ClassifyResponse:
             detail=f"Expected {WORD_CLIP_FRAMES} frames, got {len(req.frames)}.",
         )
     for i, frame in enumerate(req.frames):
-        if len(frame) != 21:
+        if len(frame) > 2:
             raise HTTPException(
                 status_code=400,
-                detail=f"Frame {i}: expected 21 landmarks, got {len(frame)}.",
+                detail=f"Frame {i}: got {len(frame)} hands, max is 2.",
             )
-    frames = [[(lm.x, lm.y, lm.z) for lm in frame] for frame in req.frames]
+        for j, hand in enumerate(frame):
+            if len(hand) != 21:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Frame {i} hand {j}: expected 21 landmarks, got {len(hand)}.",
+                )
+    frames = [
+        [[(lm.x, lm.y, lm.z) for lm in hand] for hand in frame]
+        for frame in req.frames
+    ]
     try:
         letter, confidence = classify_word_clip(frames)
     except FileNotFoundError as e:
