@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { Learning } from "./Learning";
 import { Game } from "./Game";
+import { SentenceGame } from "./SentenceGame";
 import "./index.css";
 
 function Root() {
@@ -55,9 +56,28 @@ function Root() {
         >
           ASL Game
         </button>
+        <button 
+          onClick={() => setTab("sentences")} 
+          style={{ 
+            background: tab === "sentences" ? 'var(--accent)' : 'transparent',
+            border: tab === "sentences" ? 'none' : '1px solid #3d4a71',
+            padding: '8px 20px',
+            fontSize: '16px'
+          }}
+        >
+          Sentence Game
+        </button>
       </nav>
       <main style={{ flex: 1 }}>
-        {tab === "translate" ? <App /> : tab === "learning" ? <Learning /> : <Game />}
+        {tab === "translate" ? (
+          <App />
+        ) : tab === "learning" ? (
+          <Learning />
+        ) : tab === "game" ? (
+          <Game />
+        ) : (
+          <SentenceGame />
+        )}
       </main>
     </div>
   );
