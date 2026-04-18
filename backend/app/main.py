@@ -9,10 +9,15 @@ load_dotenv()
 
 app = FastAPI(title="ASL Translator API", version="0.1.0")
 
-frontend_origin = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
+frontend_origins = [
+    o.strip()
+    for o in os.getenv("FRONTEND_ORIGIN", "http://localhost:5173").split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[frontend_origin],
+    allow_origins=frontend_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
