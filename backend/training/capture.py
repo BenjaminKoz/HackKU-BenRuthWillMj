@@ -20,6 +20,13 @@ OUT.parent.mkdir(parents=True, exist_ok=True)
 
 def main():
     cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("ERROR: couldn't open webcam (cv2.VideoCapture(0) failed).")
+        print("Likely cause: another process is using it — usually the frontend")
+        print("browser tab. Close http://localhost:5173 (or stop `npm run dev`)")
+        print("and try again.")
+        return
+
     hands = mp.solutions.hands.Hands(max_num_hands=1, min_detection_confidence=0.6)
     draw = mp.solutions.drawing_utils
 
@@ -31,6 +38,7 @@ def main():
         while True:
             ok, frame = cap.read()
             if not ok:
+                print("WARN: cap.read() returned no frame — camera may have been claimed by another app.")
                 break
             frame = cv2.flip(frame, 1)
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
