@@ -14,9 +14,9 @@ Controls while running (focus must be on the webcam window):
                      training pipeline can shorten longer clips but can't extend
                      shorter ones, so we err on the side of too many frames)
     TAB              toggle word-capture mode. In word mode:
-        1..9, 0        select the target word (0 = 10th word)
-        SPACE          record a WORD_FRAMES clip labeled with the selected word
-        TAB            back to letter mode
+        Left/Right arrow  cycle through the target word list
+        SPACE             record a WORD_FRAMES clip labeled with the selected word
+        TAB               back to letter mode
     ESC              quit
 """
 from __future__ import annotations
@@ -36,12 +36,17 @@ WORDS_CSV = DATA_DIR / "landmarks_words.csv"
 MOTION_FRAMES = 70  # ~2.3 seconds at 30fps — headroom for Z and most short words
 WORD_FRAMES = 90    # ~3 seconds at 30fps — room for slower two-movement signs
 
-# Curated starter word list. All one-handed, visually distinct, common enough to
-# compose into useful sentences via Gemini. Index 0 maps to hotkey "1", etc;
-# index 9 maps to hotkey "0".
+# Words still to record. Already-trained words (HELLO, THANKS, YES, NO, PLEASE,
+# SORRY, LOVE, YOU, HELP, NAME) are omitted so the arrows don't cycle past them.
+# Ordered by demo priority:
+#   Tier 1 (unlock core sentences): I, WANT, NEED, GOOD, MORE
+#   Tier 2 (expressiveness):        FRIEND, UNDERSTAND, HOW, EAT, HAPPY
+#   Tier 3 (polish):                WHY, WHERE, DRINK, FAMILY, HOME
+# If you need to top up samples for an already-trained word, add it back here.
 WORDS = [
-    "HELLO", "THANKS", "YES", "NO", "PLEASE",
-    "SORRY", "LOVE", "HELP", "NAME", "YOU",
+    "I", "WANT", "NEED", "GOOD", "MORE",
+    "FRIEND", "UNDERSTAND", "HOW", "EAT", "HAPPY",
+    "WHY", "WHERE", "DRINK", "FAMILY", "HOME",
 ]
 
 
@@ -99,6 +104,11 @@ def main():
     motion_recording: dict | None = None  # {'label': 'J', 'frames': [[63 floats], ...], 'target': MOTION_FRAMES, 'writer': ..., 'file': ...}
     word_mode = False
     word_index = 0  # index into WORDS
+
+    # cv2.waitKeyEx returns a platform-specific extended code for arrow keys.
+    # Windows uses 24-bit codes; Linux/X11 uses 655xx. Support both.
+    LEFT_ARROW_CODES = {2424832, 65361, 0x51}
+    RIGHT_ARROW_CODES = {2555904, 65363, 0x53}
 
     try:
         while True:
@@ -166,7 +176,7 @@ def main():
                 )
                 cv2.putText(
                     frame,
-                    "1-0 select word, SPACE record, TAB back to letters",
+                    "Left/Right arrow select, SPACE record, TAB back to letters",
                     (10, 60),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.55,
@@ -186,7 +196,10 @@ def main():
 
             cv2.imshow("ASL capture", frame)
 
-            key = cv2.waitKey(1) & 0xFF
+            # waitKeyEx returns full extended scancodes (needed for arrow keys).
+            # For ASCII-range keys we still want a 0-255 value, so mask.
+            key_ex = cv2.waitKeyEx(1)
+            key = key_ex & 0xFF if key_ex != -1 else 255
             if key == 27:  # ESC
                 break
 
@@ -197,13 +210,13 @@ def main():
                 continue
 
             if word_mode and motion_recording is None:
-                # Number-key word selection. '1'..'9' -> index 0..8, '0' -> index 9.
-                if ord("1") <= key <= ord("9"):
-                    word_index = key - ord("1")
+                # Arrow keys cycle through WORDS (wraps around at the ends).
+                if key_ex in LEFT_ARROW_CODES:
+                    word_index = (word_index - 1) % len(WORDS)
                     print(f"selected word: {WORDS[word_index]}")
                     continue
-                if key == ord("0"):
-                    word_index = 9
+                if key_ex in RIGHT_ARROW_CODES:
+                    word_index = (word_index + 1) % len(WORDS)
                     print(f"selected word: {WORDS[word_index]}")
                     continue
                 # SPACE starts a word-clip recording.
