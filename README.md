@@ -124,8 +124,42 @@ frontend/
 data/                        Training data (git-ignored)
 ```
 
+## Word mode
+
+The translator has a **Letters / Words** toggle. Word mode recognizes whole
+signs (e.g. HELLO, THANKS) instead of spelling them letter-by-letter.
+
+Starter vocabulary (10 one-handed signs): `HELLO, THANKS, YES, NO, PLEASE,
+SORRY, LOVE, HELP, NAME, YOU`.
+
+### Capture word clips
+
+```bash
+cd backend
+python training/capture.py
+# Press TAB to enter word mode.
+# Press 1–9 or 0 to select a target word (shown on screen).
+# Press SPACE to record a 90-frame (~3s) clip — sign the word the instant you press.
+# Aim for 15+ clips per word per signer. Vary hand position and speed slightly.
+# Press TAB again to return to letter capture.
+```
+
+Clips are appended to `data/landmarks_words.csv`.
+
+### Train the word model
+
+```bash
+cd backend
+python training/train_words.py
+# Writes backend/models/asl_words_classifier.joblib
+```
+
+The word model is loaded lazily by the backend. Without it, Word mode returns
+blank predictions — letter mode is unaffected.
+
 ## Notes on the ML approach
 
 - Hand landmarks are normalized: translate to wrist, scale by middle-finger MCP distance. This makes the classifier invariant to where your hand is on screen and how far from the camera.
-- The RandomForest is cheap to train (seconds) and plenty accurate for 24 static ASL letters. J and Z require motion and are flagged as a stretch goal.
+- The RandomForest is cheap to train (seconds) and plenty accurate for 24 static ASL letters. J and Z require motion, handled by a separate motion classifier that fires when the frame buffer contains a completed gesture.
 - The frontend waits for a letter to hold steady across 4 frames above 60% confidence before committing it to the buffer — cuts down on misreads during finger-shuffle transitions.
+- Word mode uses the same "clip + keyframes + wrist trajectory" recipe as the motion classifier, scaled up to 90 frames and more keyframes so multi-phase signs stay separable.

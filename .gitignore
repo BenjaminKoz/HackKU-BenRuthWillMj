@@ -27,6 +27,7 @@ data/*
 !data/.gitkeep
 !data/landmarks.csv
 !data/landmarks_motion.csv
+!data/landmarks_words.csv
 
 # OS
 .DS_Store

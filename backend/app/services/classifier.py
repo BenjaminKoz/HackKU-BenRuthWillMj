@@ -1,6 +1,6 @@
 from collections import deque
 from pathlib import Path
-from typing import Deque, List, Tuple
+from typing import Deque, List, Sequence, Tuple
 
 import numpy as np
 import joblib
@@ -10,6 +10,7 @@ from app.services.features import FEATURE_VERSION, build_features
 MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
 STATIC_MODEL_PATH = MODELS_DIR / "asl_classifier.joblib"
 MOTION_MODEL_PATH = MODELS_DIR / "asl_motion_classifier.joblib"
+WORDS_MODEL_PATH = MODELS_DIR / "asl_words_classifier.joblib"
 
 # Number of recent probability vectors to average for the static classifier.
 # Filters per-frame noise without making transitions sluggish.
@@ -18,6 +19,7 @@ SMOOTH_WINDOW = 8
 # Motion routing. The rolling landmark buffer holds the last CLIP_FRAMES raw
 # 21x3 arrays; the motion classifier reads the whole buffer when it fires.
 CLIP_FRAMES = 70                  # must match train_motion.py / capture.py
+WORD_CLIP_FRAMES = 90             # must match train_words.py / capture.py
 MOTION_WINDOW = 15                # sliding-window size for motion detection
 MOTION_DISPLACEMENT_THRESHOLD = 0.008  # stationary hand ~0.0005, J/Z peak 0.03-0.06
 SETTLE_TAIL_FRAMES = 6            # frames of recent calm to trust the motion is done
@@ -25,6 +27,7 @@ SETTLE_DISPLACEMENT = 0.005       # displacement threshold considered "calm"
 
 _static_bundle = None
 _motion_bundle = None
+_words_bundle = None
 _probs_buffer: Deque[np.ndarray] = deque(maxlen=SMOOTH_WINDOW)
 _landmark_buffer: Deque[np.ndarray] = deque(maxlen=CLIP_FRAMES)
 # Cached motion result — once fired, we keep returning it until the motion
@@ -72,6 +75,27 @@ def _load_motion():
     return _motion_bundle
 
 
+def _load_words():
+    """Word model is optional — word classification is a no-op without it."""
+    global _words_bundle
+    if _words_bundle is None and WORDS_MODEL_PATH.exists():
+        bundle = joblib.load(WORDS_MODEL_PATH)
+        if bundle.get("feature_version") != FEATURE_VERSION:
+            print(
+                f"warn: word model feature_version {bundle.get('feature_version')} "
+                f"!= expected {FEATURE_VERSION}; ignoring word model"
+            )
+            return None
+        if bundle.get("clip_frames") != WORD_CLIP_FRAMES:
+            print(
+                f"warn: word model clip_frames {bundle.get('clip_frames')} "
+                f"!= server clip_frames {WORD_CLIP_FRAMES}; ignoring word model"
+            )
+            return None
+        _words_bundle = bundle
+    return _words_bundle
+
+
 def _mean_landmark_displacement(frames: List[np.ndarray]) -> float:
     """Mean magnitude of per-landmark (x, y) change between consecutive frames,
     averaged over all 21 landmarks."""
@@ -84,10 +108,10 @@ def _mean_landmark_displacement(frames: List[np.ndarray]) -> float:
     return total / (len(frames) - 1)
 
 
-def _motion_features(buffer: List[np.ndarray]) -> np.ndarray:
-    """Rebuild the same flat feature vector that train_motion.py emits."""
-    n_keyframes = _motion_bundle["n_keyframes"]
-    idxs = np.linspace(0, CLIP_FRAMES - 1, n_keyframes).round().astype(int)
+def _clip_features(buffer: List[np.ndarray], bundle: dict, clip_frames: int) -> np.ndarray:
+    """Rebuild the same flat feature vector that train_motion/train_words emits."""
+    n_keyframes = bundle["n_keyframes"]
+    idxs = np.linspace(0, clip_frames - 1, n_keyframes).round().astype(int)
     frame0_wrist_xy = buffer[idxs[0]][0, :2]
 
     parts: List[np.ndarray] = []
@@ -117,7 +141,7 @@ def _classify_motion() -> Tuple[str, float]:
     bundle = _motion_bundle
     model = bundle["model"]
     labels = bundle["labels"]
-    features = _motion_features(list(_landmark_buffer))
+    features = _clip_features(list(_landmark_buffer), bundle, CLIP_FRAMES)
     probs = model.predict_proba(features)[0]
     idx = int(np.argmax(probs))
     return labels[idx], float(probs[idx])
@@ -132,11 +156,16 @@ def _buffer_has_motion(buf: List[np.ndarray]) -> bool:
     return False
 
 
-def classify_landmarks(points: List[Tuple[float, float, float]]) -> Tuple[str, float]:
-    """Always runs the static classifier so the frontend sees a stream of
-    letters. If the landmark buffer contains a completed motion (buffer full,
-    recent frames calm, earlier frames moving), the motion model's output
-    overrides the static prediction."""
+def classify_landmarks(
+    points: List[Tuple[float, float, float]],
+    mode: str = "letters",
+) -> Tuple[str, float]:
+    """Per-frame letter classification with motion-letter (J/Z) overrides.
+
+    Word classification is NOT handled here — words go through
+    classify_word_clip() because we want training-inference parity (the caller
+    supplies an explicit 90-frame clip the way capture.py recorded them).
+    """
     global _last_motion_result
 
     arr = np.asarray(points, dtype=np.float32).reshape(21, 3)
@@ -157,6 +186,39 @@ def classify_landmarks(points: List[Tuple[float, float, float]]) -> Tuple[str, f
             _last_motion_result = None
 
     return _classify_static(arr)
+
+
+def classify_word_clip(
+    frames: Sequence[Sequence[Tuple[float, float, float]]],
+) -> Tuple[str, float]:
+    """Classify a deliberate, caller-supplied word clip.
+
+    `frames` must have WORD_CLIP_FRAMES entries, each a 21-landmark list of
+    (x, y, z). This is the "push-to-record" inference path: the UI starts a
+    3-second capture on user action and sends the full clip in one request.
+    No gating, no timing heuristics — this is exactly how training samples
+    were recorded, so features are drop-in comparable.
+    """
+    bundle = _load_words()
+    if bundle is None:
+        raise FileNotFoundError(
+            f"Word model not found at {WORDS_MODEL_PATH}. "
+            "Run `python training/train_words.py` first."
+        )
+    if len(frames) != WORD_CLIP_FRAMES:
+        raise ValueError(
+            f"Expected {WORD_CLIP_FRAMES} frames, got {len(frames)}."
+        )
+
+    clip = np.asarray(frames, dtype=np.float32).reshape(WORD_CLIP_FRAMES, 21, 3)
+    buf = [clip[i] for i in range(WORD_CLIP_FRAMES)]
+    features = _clip_features(buf, bundle, WORD_CLIP_FRAMES)
+
+    model = bundle["model"]
+    labels = bundle["labels"]
+    probs = model.predict_proba(features)[0]
+    idx = int(np.argmax(probs))
+    return labels[idx], float(probs[idx])
 
 
 def reset_smoothing() -> None:

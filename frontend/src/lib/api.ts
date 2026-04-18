@@ -1,20 +1,41 @@
 import type { Landmark } from "../hooks/useHandLandmarker";
 
-export async function classify(landmarks: Landmark[]): Promise<{ letter: string; confidence: number }> {
+export type ClassifyMode = "letters" | "words";
+
+export async function classify(
+  landmarks: Landmark[],
+  mode: ClassifyMode = "letters",
+): Promise<{ letter: string; confidence: number }> {
   const res = await fetch("/api/classify", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ landmarks }),
+    body: JSON.stringify({ landmarks, mode }),
   });
   if (!res.ok) throw new Error(`classify failed: ${res.status}`);
   return res.json();
 }
 
-export async function compose(letters: string): Promise<string> {
+export async function resetClassify(): Promise<void> {
+  await fetch("/api/classify/reset", { method: "POST" });
+}
+
+export async function classifyWordClip(
+  frames: Landmark[][],
+): Promise<{ letter: string; confidence: number }> {
+  const res = await fetch("/api/classify-word-clip", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ frames }),
+  });
+  if (!res.ok) throw new Error(`classify-word-clip failed: ${res.status}`);
+  return res.json();
+}
+
+export async function compose(letters: string, mode: ClassifyMode = "letters"): Promise<string> {
   const res = await fetch("/api/compose", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ letters }),
+    body: JSON.stringify({ letters, mode }),
   });
   if (!res.ok) throw new Error(`compose failed: ${res.status}`);
   const data = await res.json();
