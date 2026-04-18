@@ -26,6 +26,7 @@ backend/models/*.joblib
 data/*
 !data/.gitkeep
 !data/landmarks.csv
+!data/landmarks_motion.csv
 
 # OS
 .DS_Store
