@@ -40,7 +40,6 @@ def main():
             if not ok:
                 print("WARN: cap.read() returned no frame — camera may have been claimed by another app.")
                 break
-            frame = cv2.flip(frame, 1)
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             res = hands.process(rgb)
             landmarks = None

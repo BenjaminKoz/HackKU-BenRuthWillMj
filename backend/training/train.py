@@ -216,11 +216,30 @@ def main():
     print(f"Training on {len(X)} samples across {len(labels)} classes "
           f"({n_user} from you, {len(X) - n_user} from Kaggle)")
 
-    sample_weight = np.where(is_user, args.user_weight, 1.0).astype(np.float32)
+    # Per-class user weight budget: every user class contributes the same total
+    # weight (= user_weight × mean user-count per class). Classes with lots of
+    # captures get a smaller per-sample weight; rare classes get boosted. Prevents
+    # over-represented classes from tilting the decision boundary.
+    sample_weight = np.ones(len(X), dtype=np.float32)
     if n_user:
-        print(f"Weighting your {n_user} samples at {args.user_weight}× "
-              f"(effective training strength {n_user * args.user_weight:.0f} "
-              f"vs Kaggle {len(X) - n_user})")
+        user_counts: dict[str, int] = {}
+        for lbl, is_u in zip(y, is_user):
+            if is_u:
+                user_counts[lbl] = user_counts.get(lbl, 0) + 1
+        target = sum(user_counts.values()) / len(user_counts)
+        class_budget = args.user_weight * target
+        for i, (lbl, is_u) in enumerate(zip(y, is_user)):
+            if is_u:
+                sample_weight[i] = class_budget / user_counts[lbl]
+        print(f"Balancing {n_user} user samples across {len(user_counts)} classes: "
+              f"each class gets total weight {class_budget:.0f} "
+              f"(mean {target:.1f} samples × {args.user_weight}×)")
+        min_lbl = min(user_counts, key=user_counts.get)
+        max_lbl = max(user_counts, key=user_counts.get)
+        print(f"  fewest: {min_lbl}={user_counts[min_lbl]} "
+              f"(per-sample weight {class_budget / user_counts[min_lbl]:.1f}) | "
+              f"most: {max_lbl}={user_counts[max_lbl]} "
+              f"(per-sample weight {class_budget / user_counts[max_lbl]:.1f})")
 
     X_train, X_test, y_train, y_test, w_train, _w_test = train_test_split(
         X, y_idx, sample_weight, test_size=0.2, random_state=42, stratify=y_idx
