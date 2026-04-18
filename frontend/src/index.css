@@ -1,0 +1,142 @@
+:root {
+  --bg: #0b0f1a;
+  --panel: #131a2b;
+  --accent: #7c5cff;
+  --accent-2: #22d3ee;
+  --text: #e6e9f2;
+  --muted: #8892a6;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: radial-gradient(circle at 20% 10%, #1a2140 0%, var(--bg) 60%);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+.app {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 28px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.header .tag { color: var(--muted); font-size: 14px; }
+
+.grid {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 20px;
+}
+
+@media (max-width: 900px) {
+  .grid { grid-template-columns: 1fr; }
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid #212a43;
+  border-radius: 14px;
+  padding: 16px;
+}
+
+.video-wrap {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  background: #000;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.video-wrap video,
+.video-wrap canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+.letter-big {
+  font-size: 72px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: 2px;
+  margin: 8px 0;
+}
+
+.confidence {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.buffer {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 20px;
+  background: #0a0f1e;
+  padding: 12px;
+  border-radius: 8px;
+  min-height: 48px;
+  word-break: break-all;
+}
+
+.sentence {
+  font-size: 20px;
+  line-height: 1.45;
+  min-height: 60px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+button {
+  background: var(--accent);
+  color: white;
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: transparent;
+  border: 1px solid #2a3457;
+  color: var(--text);
+}
+
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.status {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 0 0 8px; }
