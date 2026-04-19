@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Webcam } from "./components/Webcam";
 import type { Landmark } from "./hooks/useHandLandmarker";
-import { classify } from "./lib/api";
+import { classify, classifyWordClip } from "./lib/api";
 
 const LETTERS = [
   "A", "B", "C", "D", "E", "F", "G", "H", "I", "J",
@@ -12,6 +12,7 @@ const LETTERS = [
 const MIN_CONFIDENCE = 0.60;
 const SUGGESTION_THRESHOLD = 0.40;
 const STABLE_FRAMES_TO_SUGGEST = 8;
+const WORD_CLIP_FRAMES = 90;
 
 const DESCRIPTIONS: Record<string, string> = {
   A: "Make a fist and place your thumb against the side of your index finger.",
@@ -43,8 +44,10 @@ const DESCRIPTIONS: Record<string, string> = {
 };
 
 export function Learning() {
-  const [mode, setMode] = useState<"learn" | "test">("learn");
+  const [mode, setMode] = useState<"learn" | "test" | "words">("learn");
   const [activeLetter, setActiveLetter] = useState("A");
+  const [supportedWords, setSupportedWords] = useState<string[]>([]);
+  const [activeWord, setActiveWord] = useState<string | null>(null);
   const [testTarget, setTestTarget] = useState("");
   const [score, setScore] = useState(0);
   
@@ -59,11 +62,34 @@ export function Learning() {
   const [showHint, setShowHint] = useState(false);
   const [canSkip, setCanSkip] = useState(false);
 
+  // Word capture state
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [captureProgress, setCaptureProgress] = useState(0);
+  const captureBufferRef = useRef<Landmark[][][]>([]);
+
   const lastLandmarksRef = useRef<Landmark[] | null>(null);
+  const allHandsRef = useRef<Landmark[][]>([]);
   const lastClassifyRef = useRef(0);
   const inflightRef = useRef(false);
   const scoreUpdateRef = useRef(false);
   const stableSuggestionRef = useRef<{ letter: string; count: number }>({ letter: "", count: 0 });
+
+  const fetchWords = useCallback(async () => {
+    try {
+      const res = await fetch("/api/words");
+      const data = await res.json();
+      setSupportedWords(data.words || []);
+      if (data.words?.length > 0) setActiveWord(data.words[0]);
+    } catch (e) {
+      console.error("Failed to fetch words", e);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mode === "words" && supportedWords.length === 0) {
+      fetchWords();
+    }
+  }, [mode, supportedWords.length, fetchWords]);
 
   const startTest = useCallback(() => {
     setMode("test");
@@ -90,6 +116,48 @@ export function Learning() {
   const handleLandmarks = useCallback((lms: Landmark[] | null) => {
     lastLandmarksRef.current = lms;
   }, []);
+
+  const handleHands = useCallback((hands: Landmark[][]) => {
+    allHandsRef.current = hands;
+    
+    if (isCapturing) {
+      captureBufferRef.current.push(hands);
+      setCaptureProgress(captureBufferRef.current.length);
+      
+      if (captureBufferRef.current.length >= WORD_CLIP_FRAMES) {
+        setIsCapturing(false);
+        const clip = [...captureBufferRef.current];
+        captureBufferRef.current = [];
+        
+        // Finalize capture
+        finalizeWordCapture(clip);
+      }
+    }
+  }, [isCapturing]);
+
+  const finalizeWordCapture = async (clip: Landmark[][][]) => {
+    setStatus("Classifying word clip...");
+    try {
+      const result = await classifyWordClip(clip);
+      setDetectedLetter(result.letter);
+      setConfidence(result.confidence);
+      
+      if (mode === "words" && result.letter.toUpperCase() === activeWord?.toUpperCase()) {
+        setIsCorrect(true);
+        setTimeout(() => setIsCorrect(false), 2000);
+      }
+    } catch (e) {
+      console.error("Word classification failed", e);
+      setStatus("Word recognition error");
+    }
+  };
+
+  const startCapture = () => {
+    setIsCapturing(true);
+    setCaptureProgress(0);
+    captureBufferRef.current = [];
+    setStatus("Recording...");
+  };
 
   const handleSuggestionClick = useCallback(() => {
     if (!suggestion) return;
@@ -124,6 +192,8 @@ export function Learning() {
 
   useEffect(() => {
     const id = setInterval(async () => {
+      if (mode === "words") return; // Disable static classify in words mode
+      
       const lms = lastLandmarksRef.current;
       const now = performance.now();
       if (!lms || inflightRef.current || now - lastClassifyRef.current < 250) return;
@@ -131,13 +201,14 @@ export function Learning() {
       lastClassifyRef.current = now;
       inflightRef.current = true;
       try {
-        const { letter, confidence: conf } = await classify(lms);
+        const { letter, confidence: conf } = await classify(lms, "letters");
         const upper = letter.toUpperCase();
         setDetectedLetter(upper);
         setConfidence(conf);
         
         const target = mode === "learn" ? activeLetter : testTarget;
         const correct = upper === target && conf >= MIN_CONFIDENCE;
+        
         setIsCorrect(correct);
 
         if (correct && !scoreUpdateRef.current) {
@@ -179,7 +250,9 @@ export function Learning() {
           stableSuggestionRef.current = { letter: "", count: 0 };
         }
 
-        setStatus("Tracking");
+        if (!isCapturing) {
+          setStatus("Tracking");
+        }
       } catch (e) {
         setStatus("Classifier unavailable");
       } finally {
@@ -187,7 +260,18 @@ export function Learning() {
       }
     }, 100);
     return () => clearInterval(id);
-  }, [mode, activeLetter, testTarget, nextTestItem]);
+  }, [mode, activeLetter, testTarget, nextTestItem, isCapturing]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (mode !== "words") return;
+      
+      if (!isCapturing) {
+        setStatus(lastLandmarksRef.current ? "Hand detected! Ready to record." : "Waiting for hand...");
+      }
+    }, 500);
+    return () => clearInterval(id);
+  }, [mode, isCapturing]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -195,6 +279,9 @@ export function Learning() {
         if (suggestion) {
           e.preventDefault();
           handleSuggestionClick();
+        } else if (mode === "words" && !isCapturing) {
+          e.preventDefault();
+          startCapture();
         }
       } else if (e.code === "Escape") {
         if (suggestion) {
@@ -206,14 +293,19 @@ export function Learning() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [suggestion, handleSuggestionClick]);
+  }, [suggestion, handleSuggestionClick, mode, isCapturing]);
 
   return (
     <div className="app">
       <div className="header">
-        <h1>{mode === "learn" ? "Learning ASL" : "ASL Skill Test"}</h1>
+        <h1>{
+          mode === "learn" ? "Learning ASL" : 
+          mode === "words" ? "ASL Words Guide" : 
+          "ASL Skill Test"
+        }</h1>
         <div className="row">
            <button onClick={() => setMode("learn")} className={mode === "learn" ? "" : "secondary"}>Study Guide</button>
+           <button onClick={() => setMode("words")} className={mode === "words" ? "" : "secondary"}>Words Guide</button>
            <button onClick={startTest} className={mode === "test" ? "" : "secondary"}>Test Me!</button>
         </div>
       </div>
@@ -252,7 +344,7 @@ export function Learning() {
             </div>
           )}
           <h2>Practice Area</h2>
-          <Webcam onLandmarks={handleLandmarks} />
+          <Webcam onLandmarks={handleLandmarks} onHands={handleHands} />
           
           <div style={{ marginTop: '16px', textAlign: 'center' }}>
             <div style={{ 
@@ -260,15 +352,43 @@ export function Learning() {
               borderRadius: '8px', 
               background: isCorrect ? '#065f46' : '#1e293b',
               border: `2px solid ${isCorrect ? '#4ade80' : '#334155'}`,
-              transition: 'all 0.2s'
+              transition: 'all 0.2s',
+              position: 'relative',
+              overflow: 'hidden'
             }}>
-              <div style={{ fontSize: '14px', color: 'var(--muted)', marginBottom: '4px' }}>Detected Sign:</div>
-              <div style={{ fontSize: '48px', fontWeight: 'bold' }}>{detectedLetter}</div>
+              {isCapturing && (
+                <div style={{
+                  position: 'absolute',
+                  bottom: 0,
+                  left: 0,
+                  height: '4px',
+                  backgroundColor: 'var(--accent)',
+                  width: `${(captureProgress / WORD_CLIP_FRAMES) * 100}%`,
+                  transition: 'width 0.1s linear'
+                }} />
+              )}
+              <div style={{ fontSize: '14px', color: 'var(--muted)', marginBottom: '4px' }}>
+                {isCapturing ? "Recording Motion..." : "Detected Sign:"}
+              </div>
+              <div style={{ fontSize: '48px', fontWeight: 'bold' }}>
+                {isCapturing ? `${Math.round((captureProgress / WORD_CLIP_FRAMES) * 100)}%` : detectedLetter}
+              </div>
               <div style={{ fontSize: '18px', color: isCorrect ? '#4ade80' : 'var(--muted)' }}>
                 {isCorrect ? "✨ CORRECT! ✨" : `Confidence: ${(confidence * 100).toFixed(0)}%`}
               </div>
             </div>
           </div>
+
+          {mode === "words" && (
+            <button 
+              onClick={startCapture} 
+              disabled={isCapturing}
+              style={{ width: '100%', marginTop: '10px', backgroundColor: isCapturing ? '#334155' : 'var(--accent)' }}
+            >
+              {isCapturing ? "Recording..." : "Record & Test Word [Space]"}
+            </button>
+          )}
+
           <div className="status">{status}</div>
         </div>
 
@@ -321,6 +441,53 @@ export function Learning() {
                 <div className="sentence">{DESCRIPTIONS[activeLetter]}</div>
               </div>
             </>
+          ) : mode === "words" ? (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+              <h2>Select a word to learn</h2>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '20px' }}>
+                {supportedWords.length > 0 ? (
+                  supportedWords.map(w => (
+                    <button 
+                      key={w} 
+                      onClick={() => {
+                        setActiveWord(w);
+                        setIsCorrect(false);
+                      }}
+                      className={w === activeWord ? "" : "secondary"}
+                      style={{ padding: '8px 16px' }}
+                    >
+                      {w}
+                    </button>
+                  ))
+                ) : (
+                  <p style={{ color: 'var(--muted)' }}>No word model loaded. Train one with `train_words.py`.</p>
+                )}
+              </div>
+              
+              {activeWord && (
+                <div style={{ textAlign: 'center', marginTop: '20px' }}>
+                  <div style={{ 
+                    fontSize: '80px', 
+                    color: 'var(--accent)', 
+                    marginBottom: '20px',
+                    fontWeight: 'bold' 
+                  }}>
+                    {activeWord}
+                  </div>
+                  <div style={{ 
+                    padding: '20px', 
+                    backgroundColor: 'rgba(255,255,255,0.05)', 
+                    borderRadius: '12px',
+                    border: '1px solid #334155'
+                  }}>
+                    <h3>How to sign</h3>
+                    <p style={{ fontSize: '16px', lineHeight: '1.6' }}>
+                      Words in ASL often involve motion. Click <strong>"Record & Test Word"</strong> then sign <strong>{activeWord}</strong> for about 3 seconds.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
           ) : (
             <div style={{ textAlign: 'center', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
               <h2>Challenge: Sign this letter</h2>
