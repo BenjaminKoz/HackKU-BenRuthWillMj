@@ -34,10 +34,7 @@ body {
 .header h1 {
   margin: 0;
   font-size: 28px;
-  background: linear-gradient(90deg, var(--accent), var(--accent-2));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: #3b82f6;
 }
 
 .header .tag { color: var(--muted); font-size: 14px; }
