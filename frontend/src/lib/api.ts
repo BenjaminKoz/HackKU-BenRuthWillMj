@@ -6,6 +6,13 @@ export type ClassifyMode = "letters" | "words";
 // proxy forwards /api/* to localhost:8000. In prod (Vercel), set it to the
 // deployed backend origin (e.g. https://<user>-<space>.hf.space).
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+
+if (import.meta.env.PROD && !API_BASE) {
+  console.warn(
+    "VITE_API_BASE_URL is not set. Production requests will go to the frontend origin's /api/* paths.",
+  );
+}
+
 const url = (path: string) => `${API_BASE}${path}`;
 
 export async function classify(

@@ -56,6 +56,23 @@ npm run dev
 
 Open http://localhost:5173.
 
+### 2.1 Frontend env for production
+
+For local dev, leave `VITE_API_BASE_URL` unset and Vite will proxy `/api/*` to
+`http://127.0.0.1:8000`.
+
+For a Vercel deployment, set `VITE_API_BASE_URL` in the Vercel project settings
+before building. It must point at your deployed backend origin, for example:
+
+```bash
+VITE_API_BASE_URL=https://your-backend-host.example.com
+```
+
+If this variable is missing in production, the frontend will call relative
+paths like `/api/sentence-game/generate` on the Vercel app itself, and those
+requests will fail unless you also deploy the FastAPI backend behind the same
+origin.
+
 ### 3. Train the classifier
 
 The `/classify` endpoint needs a trained model at `backend/models/asl_classifier.joblib`. Two options:

@@ -8,6 +8,12 @@ const STABLE_FRAMES_TO_COMMIT = 5;
 const STABLE_FRAMES_TO_SUGGEST = 8;
 const MIN_CONFIDENCE = 0.60;
 const SUGGESTION_THRESHOLD = 0.40;
+const SENTENCE_FETCH_RETRIES = 3;
+const SENTENCE_FETCH_RETRY_DELAY_MS = 500;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export function SentenceGame() {
   const [sentence, setSentence] = useState("");
@@ -35,14 +41,22 @@ export function SentenceGame() {
     setBuffer("");
     setSuggestion(null);
     setPossibleWords([]);
-    try {
-      const data = await generateSentence();
-      setSentence(data.sentence_with_blank);
-      setPossibleWords(data.possible_words);
-    } catch (e) {
-      setStatus("Error fetching sentence");
-    } finally {
-      setLoading(false);
+    for (let attempt = 1; attempt <= SENTENCE_FETCH_RETRIES; attempt += 1) {
+      try {
+        const data = await generateSentence();
+        setSentence(data.sentence_with_blank);
+        setPossibleWords(data.possible_words);
+        setStatus("Waiting for hand…");
+        setLoading(false);
+        return;
+      } catch (e) {
+        if (attempt === SENTENCE_FETCH_RETRIES) {
+          setStatus("Error fetching sentence");
+          setLoading(false);
+          return;
+        }
+        await sleep(SENTENCE_FETCH_RETRY_DELAY_MS);
+      }
     }
   }, []);
 
