@@ -4,7 +4,6 @@ import type { Landmark } from "./hooks/useHandLandmarker";
 import {
   classify,
   classifyWordClip,
-  compose,
   fetchSupportedWords,
   resetClassify,
   speak,
@@ -30,8 +29,6 @@ export default function App() {
   const [currentLetter, setCurrentLetter] = useState<string>("-");
   const [confidence, setConfidence] = useState(0);
   const [buffer, setBuffer] = useState("");
-  const [sentence, setSentence] = useState("");
-  const [composing, setComposing] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [status, setStatus] = useState("Waiting for hand…");
 
@@ -178,7 +175,6 @@ export default function App() {
       modeRef.current = next;
       setMode(next);
       setBuffer("");
-      setSentence("");
       setCurrentLetter("-");
       setConfidence(0);
       stableLetterRef.current = { letter: "", count: 0 };
@@ -369,27 +365,13 @@ export default function App() {
   const onBackspace = () => setBuffer((b) => b.slice(0, -1));
   const onClear = () => {
     setBuffer("");
-    setSentence("");
-  };
-
-  const onCompose = async () => {
-    if (!buffer.trim()) return;
-    setComposing(true);
-    try {
-      const text = await compose(buffer, mode);
-      setSentence(text);
-    } catch (e) {
-      setStatus(e instanceof Error ? e.message : "compose error");
-    } finally {
-      setComposing(false);
-    }
   };
 
   const onSpeak = async () => {
-    if (!sentence.trim()) return;
+    if (!buffer.trim()) return;
     setSpeaking(true);
     try {
-      const blob = await speak(sentence);
+      const blob = await speak(buffer);
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       audio.onended = () => URL.revokeObjectURL(url);
@@ -525,21 +507,7 @@ export default function App() {
             <button className="secondary" onClick={onSpace}>Space</button>
             <button className="secondary" onClick={onBackspace}>Backspace</button>
             <button className="secondary" onClick={onClear}>Clear</button>
-            <button onClick={onCompose} disabled={composing || !buffer.trim()}>
-              {composing ? "Composing…" : "Compose sentence"}
-            </button>
-          </div>
-
-          <h2 style={{ marginTop: 24 }}>Sentence</h2>
-          <div className="sentence">
-            {sentence || (
-              <span style={{ color: "#8892a6" }}>
-                Press "Compose sentence" to turn {mode === "words" ? "words" : "letters"} into English with Gemini.
-              </span>
-            )}
-          </div>
-          <div className="row">
-            <button onClick={onSpeak} disabled={speaking || !sentence.trim()}>
+            <button onClick={onSpeak} disabled={speaking || !buffer.trim()}>
               {speaking ? "Speaking…" : "🔊 Speak (ElevenLabs)"}
             </button>
           </div>

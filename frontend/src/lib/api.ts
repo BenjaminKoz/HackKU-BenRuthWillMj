@@ -51,17 +51,6 @@ export async function classifyWordClip(
   return res.json();
 }
 
-export async function compose(letters: string, mode: ClassifyMode = "letters"): Promise<string> {
-  const res = await fetch(url("/api/compose"), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ letters, mode }),
-  });
-  if (!res.ok) throw new Error(`compose failed: ${res.status}`);
-  const data = await res.json();
-  return data.text as string;
-}
-
 export async function speak(text: string): Promise<Blob> {
   const res = await fetch(url("/api/speak"), {
     method: "POST",
