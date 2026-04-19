@@ -301,15 +301,22 @@ export default function App() {
     }, maxMs);
   }, [clearWordTimers]);
 
-  // Space bar in Words mode triggers a recording (unless typing in a field).
+  // Keyboard shortcuts (Space, Backspace)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.code !== "Space") return;
-      if (modeRef.current !== "words") return;
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
-      e.preventDefault();
-      startRecording();
+
+      if (e.code === "Space") {
+        e.preventDefault();
+        if (modeRef.current === "words") {
+          startRecording();
+        } else {
+          onSpace();
+        }
+      } else if (e.code === "Backspace") {
+        onBackspace();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
