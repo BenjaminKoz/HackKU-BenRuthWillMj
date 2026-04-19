@@ -1,18 +1,12 @@
 """Record ASL landmark samples from the webcam.
 
 Static single-frame samples -> data/landmarks.csv          (one hand)
-Motion sequences (J, Z)     -> data/landmarks_motion.csv   (one hand)
 Word sequences              -> data/landmarks_words.csv    (TWO hands per frame:
                                                             leftmost-wrist first,
                                                             missing slot zero-padded)
 
 Controls while running (focus must be on the webcam window):
     a-z              record one static sample labeled with that letter
-    Shift+J, Shift+Z record a 70-frame motion clip for J or Z
-                     (start signing the motion the instant you press the key;
-                     keep your hand in frame until the counter hits 70 — the
-                     training pipeline can shorten longer clips but can't extend
-                     shorter ones, so we err on the side of too many frames)
     TAB              toggle word-capture mode. In word mode:
         Left/Right arrow  cycle through the target word list
         SPACE             record a WORD_FRAMES clip labeled with the selected word
@@ -30,10 +24,8 @@ import mediapipe as mp
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 STATIC_CSV = DATA_DIR / "landmarks.csv"
-MOTION_CSV = DATA_DIR / "landmarks_motion.csv"
 WORDS_CSV = DATA_DIR / "landmarks_words.csv"
 
-MOTION_FRAMES = 70  # ~2.3 seconds at 30fps — headroom for Z and most short words
 WORD_FRAMES = 90    # ~3 seconds at 30fps — room for slower two-movement signs
 
 # Words still to record. Already-trained words (HELLO, THANKS, YES, NO, PLEASE,
@@ -96,12 +88,10 @@ def main():
     held_label = "A"
     static_f = STATIC_CSV.open("a", newline="")
     static_writer = csv.writer(static_f)
-    motion_f = MOTION_CSV.open("a", newline="")
-    motion_writer = csv.writer(motion_f)
     words_f = WORDS_CSV.open("a", newline="")
     words_writer = csv.writer(words_f)
 
-    motion_recording: dict | None = None  # {'label': 'J', 'frames': [[63 floats], ...], 'target': MOTION_FRAMES, 'writer': ..., 'file': ...}
+    word_recording: dict | None = None  # {'label': 'HELLO', 'frames': [[126 floats], ...], 'target': WORD_FRAMES}
     word_mode = False
     word_index = 0  # index into WORDS
 
@@ -125,38 +115,30 @@ def main():
                 for h in multi_hands:
                     draw.draw_landmarks(frame, h, mp.solutions.hands.HAND_CONNECTIONS)
 
-            # If in the middle of a motion/word capture, grab the next frame's landmarks.
+            # If in the middle of a word capture, grab the next frame's two-hand
+            # landmarks (sorted leftmost-first, zero-padded if only one is visible).
             # A lost hand mid-clip duplicates the last frame so timing stays intact.
-            # Word clips capture TWO hands per frame (sorted leftmost-first,
-            # zero-padded if only one is visible); motion clips capture one.
-            if motion_recording is not None:
-                kind = motion_recording["kind"]
-                if kind == "word":
-                    if multi_hands:
-                        motion_recording["frames"].append(two_hand_frame_floats(multi_hands))
-                    elif motion_recording["frames"]:
-                        motion_recording["frames"].append(motion_recording["frames"][-1])
-                else:
-                    if landmarks is not None:
-                        motion_recording["frames"].append(flatten_landmarks(landmarks))
-                    elif motion_recording["frames"]:
-                        motion_recording["frames"].append(motion_recording["frames"][-1])
+            if word_recording is not None:
+                if multi_hands:
+                    word_recording["frames"].append(two_hand_frame_floats(multi_hands))
+                elif word_recording["frames"]:
+                    word_recording["frames"].append(word_recording["frames"][-1])
                 # else: hand not yet visible; wait one more loop.
 
-                if len(motion_recording["frames"]) >= motion_recording["target"]:
-                    row = [motion_recording["label"]]
-                    for flat in motion_recording["frames"]:
+                if len(word_recording["frames"]) >= word_recording["target"]:
+                    row = [word_recording["label"]]
+                    for flat in word_recording["frames"]:
                         row.extend(flat)
-                    motion_recording["writer"].writerow(row)
-                    motion_recording["file"].flush()
-                    print(f"recorded {motion_recording['kind']} {motion_recording['label']}")
-                    motion_recording = None
+                    words_writer.writerow(row)
+                    words_f.flush()
+                    print(f"recorded word {word_recording['label']}")
+                    word_recording = None
 
-            if motion_recording is not None:
-                progress = len(motion_recording["frames"])
+            if word_recording is not None:
+                progress = len(word_recording["frames"])
                 cv2.putText(
                     frame,
-                    f"REC {motion_recording['label']}  {progress}/{motion_recording['target']}",
+                    f"REC {word_recording['label']}  {progress}/{word_recording['target']}",
                     (10, 70),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     1.2,
@@ -186,7 +168,7 @@ def main():
             else:
                 cv2.putText(
                     frame,
-                    f"Last: {held_label}  (a-z static, Shift+J/Z motion, TAB words, ESC quit)",
+                    f"Last: {held_label}  (a-z static, TAB words, ESC quit)",
                     (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.7,
@@ -204,12 +186,12 @@ def main():
                 break
 
             # TAB toggles word mode. Disabled mid-clip.
-            if motion_recording is None and key == 9:  # TAB
+            if word_recording is None and key == 9:  # TAB
                 word_mode = not word_mode
                 print(f"word mode: {'ON' if word_mode else 'OFF'}")
                 continue
 
-            if word_mode and motion_recording is None:
+            if word_mode and word_recording is None:
                 # Arrow keys cycle through WORDS (wraps around at the ends).
                 if key_ex in LEFT_ARROW_CODES:
                     word_index = (word_index - 1) % len(WORDS)
@@ -224,39 +206,19 @@ def main():
                     if landmarks is None:
                         print(f"can't start word {WORDS[word_index]}: no hand detected")
                     else:
-                        motion_recording = {
+                        word_recording = {
                             "label": WORDS[word_index],
                             "frames": [],
                             "target": WORD_FRAMES,
-                            "writer": words_writer,
-                            "file": words_f,
-                            "kind": "word",
                         }
                         print(f"starting word capture for {WORDS[word_index]}; sign it now")
                     continue
                 # In word mode, letter keys are ignored — force TAB to exit first.
                 continue
 
-            # Motion trigger: Shift+J (74) or Shift+Z (90). Requires hand already
-            # in frame so the clip starts with a valid pose.
-            if motion_recording is None and key in (ord("J"), ord("Z")):
-                if landmarks is None:
-                    print(f"can't start motion {chr(key)}: no hand detected")
-                else:
-                    motion_recording = {
-                        "label": chr(key),
-                        "frames": [],
-                        "target": MOTION_FRAMES,
-                        "writer": motion_writer,
-                        "file": motion_f,
-                        "kind": "motion",
-                    }
-                    print(f"starting motion capture for {chr(key)}; sign it now")
-                continue
-
-            # Static capture: lowercase a-z. Disabled during motion recording.
+            # Static capture: lowercase a-z. Disabled during word recording.
             if (
-                motion_recording is None
+                word_recording is None
                 and ord("a") <= key <= ord("z")
                 and landmarks is not None
             ):
@@ -269,7 +231,6 @@ def main():
         cap.release()
         cv2.destroyAllWindows()
         static_f.close()
-        motion_f.close()
         words_f.close()
 
 
