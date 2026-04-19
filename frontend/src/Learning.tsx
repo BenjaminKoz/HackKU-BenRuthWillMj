@@ -3,6 +3,7 @@ import { Webcam } from "./components/Webcam";
 import type { Landmark } from "./hooks/useHandLandmarker";
 import { classify, classifyWordClip } from "./lib/api";
 
+
 const LETTERS = [
   "A", "B", "C", "D", "E", "F", "G", "H", "I", "J",
   "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T",
@@ -43,11 +44,39 @@ const DESCRIPTIONS: Record<string, string> = {
   Z: "Extend your index finger and trace the shape of a 'Z' in the air."
 };
 
+const KNOWN_WORDS = [
+  "EAT", "FRIEND", "GOOD", "HAPPY", "HELLO", "HELP", "HOW", "I", "LOVE",
+  "MORE", "NAME", "NEED", "NO", "PLEASE", "SORRY", "THANKS", "UNDERSTAND",
+  "WANT", "YES", "YOU"
+];
+
+const WORD_DESCRIPTIONS: Record<string, string> = {
+  EAT: "Bring your fingertips and thumb together (a flat O-shape) and tap them to your lips a couple of times, as if putting food in your mouth.",
+  FRIEND: "Hook both index fingers — one pointing up, one pointing down — link them together, then reverse the hook positions.",
+  GOOD: "Touch the fingers of your flat hand to your chin, then move that hand down to land in the palm of your other hand.",
+  HAPPY: "With an open, flat hand, brush upward on your chest a couple of times in a circular motion.",
+  HELLO: "Touch your flat hand to your forehead near your temple (like a salute) and move it out and away from your head.",
+  HELP: "Rest a closed thumbs-up fist on the palm of your flat, open hand, and lift both hands upward together.",
+  HOW: "Put the backs of your curled fingers together, then roll both hands forward and upward so the palms end up facing up.",
+  I: "Hold up your pinky finger, palm facing you. Keep all other fingers folded into your palm.",
+  LOVE: "Cross both fists over your chest, as if hugging yourself.",
+  MORE: "Form a flat-O shape with each hand (fingers and thumb pinched together) and tap the two flat-O fingertips together a couple of times.",
+  NAME: "Extend your index and middle fingers on both hands (like 'H' handshapes) and tap the top hand's fingers down onto the bottom hand's fingers.",
+  NEED: "Make an 'X' handshape (bent index finger) pointing down and bounce your wrist down firmly a couple of times.",
+  NO: "Tap your index and middle fingers down onto your thumb once, like a mouth snapping shut.",
+  PLEASE: "Place your flat, open hand on your chest and rub it in a circular motion.",
+  SORRY: "Make a fist and rub it in a circle over your chest, over your heart.",
+  THANKS: "Touch the fingertips of your flat hand to your chin, then move your hand forward and down toward the person you're thanking.",
+  UNDERSTAND: "Hold a fist up near your forehead, then flick your index finger up (like a lightbulb switching on).",
+  WANT: "Hold both hands out in front of you, palms up and fingers slightly curved, and pull them toward your body.",
+  YES: "Make a fist and nod it up and down at the wrist, like a head nodding yes.",
+  YOU: "Point your index finger straight out toward the person you're addressing."
+};
+
 export function Learning() {
   const [mode, setMode] = useState<"learn" | "test" | "words">("learn");
   const [activeLetter, setActiveLetter] = useState("A");
-  const [supportedWords, setSupportedWords] = useState<string[]>([]);
-  const [activeWord, setActiveWord] = useState<string | null>(null);
+  const [activeWord, setActiveWord] = useState<string>(KNOWN_WORDS[0]);
   const [testTarget, setTestTarget] = useState("");
   const [score, setScore] = useState(0);
   
@@ -73,23 +102,6 @@ export function Learning() {
   const inflightRef = useRef(false);
   const scoreUpdateRef = useRef(false);
   const stableSuggestionRef = useRef<{ letter: string; count: number }>({ letter: "", count: 0 });
-
-  const fetchWords = useCallback(async () => {
-    try {
-      const res = await fetch("/api/words");
-      const data = await res.json();
-      setSupportedWords(data.words || []);
-      if (data.words?.length > 0) setActiveWord(data.words[0]);
-    } catch (e) {
-      console.error("Failed to fetch words", e);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (mode === "words" && supportedWords.length === 0) {
-      fetchWords();
-    }
-  }, [mode, supportedWords.length, fetchWords]);
 
   const startTest = useCallback(() => {
     setMode("test");
@@ -445,48 +457,46 @@ export function Learning() {
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
               <h2>Select a word to learn</h2>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '20px' }}>
-                {supportedWords.length > 0 ? (
-                  supportedWords.map(w => (
-                    <button 
-                      key={w} 
-                      onClick={() => {
-                        setActiveWord(w);
-                        setIsCorrect(false);
-                      }}
-                      className={w === activeWord ? "" : "secondary"}
-                      style={{ padding: '8px 16px' }}
-                    >
-                      {w}
-                    </button>
-                  ))
-                ) : (
-                  <p style={{ color: 'var(--muted)' }}>No word model loaded. Train one with `train_words.py`.</p>
-                )}
+                {KNOWN_WORDS.map(w => (
+                  <button
+                    key={w}
+                    onClick={() => {
+                      setActiveWord(w);
+                      setIsCorrect(false);
+                    }}
+                    className={w === activeWord ? "" : "secondary"}
+                    style={{ padding: '8px 16px' }}
+                  >
+                    {w}
+                  </button>
+                ))}
               </div>
-              
-              {activeWord && (
-                <div style={{ textAlign: 'center', marginTop: '20px' }}>
-                  <div style={{ 
-                    fontSize: '80px', 
-                    color: 'var(--accent)', 
-                    marginBottom: '20px',
-                    fontWeight: 'bold' 
-                  }}>
-                    {activeWord}
-                  </div>
-                  <div style={{ 
-                    padding: '20px', 
-                    backgroundColor: 'rgba(255,255,255,0.05)', 
-                    borderRadius: '12px',
-                    border: '1px solid #334155'
-                  }}>
-                    <h3>How to sign</h3>
-                    <p style={{ fontSize: '16px', lineHeight: '1.6' }}>
-                      Words in ASL often involve motion. Click <strong>"Record & Test Word"</strong> then sign <strong>{activeWord}</strong> for about 3 seconds.
-                    </p>
-                  </div>
+
+              <div style={{ textAlign: 'center', marginTop: '20px' }}>
+                <div style={{
+                  fontSize: '80px',
+                  color: 'var(--accent)',
+                  marginBottom: '20px',
+                  fontWeight: 'bold'
+                }}>
+                  {activeWord}
                 </div>
-              )}
+                <div style={{
+                  padding: '20px',
+                  backgroundColor: 'rgba(255,255,255,0.05)',
+                  borderRadius: '12px',
+                  border: '1px solid #334155',
+                  textAlign: 'left'
+                }}>
+                  <h3 style={{ textAlign: 'center' }}>How to sign</h3>
+                  <p style={{ fontSize: '16px', lineHeight: '1.6' }}>
+                    {WORD_DESCRIPTIONS[activeWord]}
+                  </p>
+                  <p style={{ fontSize: '14px', lineHeight: '1.6', color: 'var(--muted)', marginTop: '12px' }}>
+                    Click <strong>"Record &amp; Test Word"</strong> and sign <strong>{activeWord}</strong> for about 3 seconds.
+                  </p>
+                </div>
+              </div>
             </div>
           ) : (
             <div style={{ textAlign: 'center', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
