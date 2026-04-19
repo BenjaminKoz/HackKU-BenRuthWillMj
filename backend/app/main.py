@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routes import classify, compose, speak, sentence_game
+from app.routes import classify, compose, speak
 
 load_dotenv()
 
@@ -26,7 +26,6 @@ app.add_middleware(
 app.include_router(classify.router, prefix="/api", tags=["classify"])
 app.include_router(compose.router, prefix="/api", tags=["compose"])
 app.include_router(speak.router, prefix="/api", tags=["speak"])
-app.include_router(sentence_game.router, prefix="/api", tags=["sentence_game"])
 
 
 @app.get("/api/health")

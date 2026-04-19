@@ -1,25 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Webcam } from "./components/Webcam";
 import type { Landmark } from "./hooks/useHandLandmarker";
-import { classify, generateSentence, validateWord } from "./lib/api";
+import { classify } from "./lib/api";
+import { generateSentence, validateWord } from "./lib/sentences";
 
 const CLASSIFY_INTERVAL_MS = 300;
 const STABLE_FRAMES_TO_COMMIT = 5;
 const STABLE_FRAMES_TO_SUGGEST = 8;
 const MIN_CONFIDENCE = 0.60;
 const SUGGESTION_THRESHOLD = 0.40;
-const SENTENCE_FETCH_RETRIES = 3;
-const SENTENCE_FETCH_RETRY_DELAY_MS = 500;
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 export function SentenceGame() {
   const [sentence, setSentence] = useState("");
   const [possibleWords, setPossibleWords] = useState<string[]>([]);
   const [buffer, setBuffer] = useState("");
-  const [loading, setLoading] = useState(true);
   const [validating, setValidating] = useState(false);
   const [result, setResult] = useState<{ is_correct: boolean; explanation: string } | null>(null);
   
@@ -35,29 +29,14 @@ export function SentenceGame() {
   const stableSuggestionRef = useRef<{ letter: string; count: number }>({ letter: "", count: 0 });
   const inflightRef = useRef(false);
 
-  const initGame = useCallback(async () => {
-    setLoading(true);
+  const initGame = useCallback(() => {
     setResult(null);
     setBuffer("");
     setSuggestion(null);
-    setPossibleWords([]);
-    for (let attempt = 1; attempt <= SENTENCE_FETCH_RETRIES; attempt += 1) {
-      try {
-        const data = await generateSentence();
-        setSentence(data.sentence_with_blank);
-        setPossibleWords(data.possible_words);
-        setStatus("Waiting for hand…");
-        setLoading(false);
-        return;
-      } catch (e) {
-        if (attempt === SENTENCE_FETCH_RETRIES) {
-          setStatus("Error fetching sentence");
-          setLoading(false);
-          return;
-        }
-        await sleep(SENTENCE_FETCH_RETRY_DELAY_MS);
-      }
-    }
+    const data = generateSentence();
+    setSentence(data.sentence_with_blank);
+    setPossibleWords(data.possible_words);
+    setStatus("Waiting for hand…");
   }, []);
 
   useEffect(() => {
@@ -71,22 +50,16 @@ export function SentenceGame() {
   const onBackspace = () => setBuffer(b => b.slice(0, -1));
   const onClear = () => setBuffer("");
 
-  const onCheck = async () => {
+  const onCheck = () => {
     if (!buffer || validating) return;
     setValidating(true);
-    try {
-      const res = await validateWord(sentence, buffer);
-      setResult(res);
-    } catch (e) {
-      setStatus("Error validating word");
-    } finally {
-      setValidating(false);
-    }
+    setResult(validateWord(sentence, buffer));
+    setValidating(false);
   };
 
   useEffect(() => {
     const id = setInterval(async () => {
-      if (loading || validating || result?.is_correct) return;
+      if (validating || result?.is_correct) return;
       const lms = lastLandmarksRef.current;
       const now = performance.now();
       if (!lms || inflightRef.current || now - lastClassifyRef.current < CLASSIFY_INTERVAL_MS) return;
@@ -138,7 +111,7 @@ export function SentenceGame() {
       }
     }, 100);
     return () => clearInterval(id);
-  }, [loading, validating, result]);
+  }, [validating, result]);
 
   const handleSuggestionClick = () => {
     if (suggestion) {
@@ -202,14 +175,7 @@ export function SentenceGame() {
         </div>
 
         <div className="panel" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          {loading ? (
-            <div style={{ textAlign: 'center', padding: '40px' }}>
-              <div style={{ animation: 'bounce 1s infinite', fontSize: '24px', marginBottom: '10px' }}>📝</div>
-              Loading next sentence...
-            </div>
-          ) : (
-            <>
-              <div style={{ textAlign: 'center' }}>
+          <div style={{ textAlign: 'center' }}>
                 <h2>Complete the sentence</h2>
                 <div style={{ fontSize: '24px', margin: '20px 0', lineHeight: '1.5' }}>
                   {sentence.split("___").map((part, i, arr) => (
@@ -285,8 +251,6 @@ export function SentenceGame() {
                   )}
                 </div>
               )}
-            </>
-          )}
           <button className="secondary" onClick={initGame} style={{ marginTop: 'auto' }}>
             New Sentence
           </button>
