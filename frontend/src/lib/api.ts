@@ -6,6 +6,13 @@ export type ClassifyMode = "letters" | "words";
 // proxy forwards /api/* to localhost:8000. In prod (Vercel), set it to the
 // deployed backend origin (e.g. https://<user>-<space>.hf.space).
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+
+if (import.meta.env.PROD && !API_BASE) {
+  console.warn(
+    "VITE_API_BASE_URL is not set. Production requests will go to the frontend origin's /api/* paths.",
+  );
+}
+
 const url = (path: string) => `${API_BASE}${path}`;
 
 export async function classify(
@@ -65,22 +72,3 @@ export async function speak(text: string): Promise<Blob> {
   return res.blob();
 }
 
-export async function generateSentence(): Promise<{
-  sentence_with_blank: string;
-  target_word: string;
-  possible_words: string[];
-}> {
-  const res = await fetch(url("/api/sentence-game/generate"));
-  if (!res.ok) throw new Error(`generateSentence failed: ${res.status}`);
-  return res.json();
-}
-
-export async function validateWord(sentence_with_blank: string, user_word: string): Promise<{ is_correct: boolean; explanation: string }> {
-  const res = await fetch(url("/api/sentence-game/validate"), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ sentence_with_blank, user_word }),
-  });
-  if (!res.ok) throw new Error(`validateWord failed: ${res.status}`);
-  return res.json();
-}
